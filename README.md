@@ -69,6 +69,20 @@ npx cap open ios
 - 皮肤：夜航 / 日间 / 暖纸；字号标准 / 大
 - 启动闪屏 + PWA Service Worker + LuckyTodo Logo
 - Capacitor：StatusBar / SplashScreen / LocalNotifications / Haptics
+- **主屏组件（v004）**：今日提醒 + 家庭日历 WidgetKit；App Group 快照；组件内添加待办（iOS 17+）。详见 `ios/WIDGETS.md`
+
+## 主屏组件（iOS）
+
+| 组件 | 尺寸 | 说明 |
+|------|------|------|
+| 今日提醒 | 小 / 中 / 大 | 今日提醒列表，点进 App |
+| 家庭日历 | 中 / 大 | 周条/月历落点；iOS 17+ 可在组件内添加待办 |
+
+```bash
+npm install && npx cap sync ios && npx cap open ios
+```
+
+Xcode 中为 **App** 与 **LuckyTodoWidgetExtension** 配置同一 Signing Team，确认 App Groups 含 `group.family.luckytodo.app`。浏览器无法预览系统组件；App 内「我的」可查看最近快照并手动刷新。
 
 ## 默认端口
 
