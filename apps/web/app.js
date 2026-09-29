@@ -2611,7 +2611,7 @@ async function renderHome() {
 
 async function render() {
   applyChrome();
-  if (state.screen === 'home' && !api.isLoggedIn()) {
+  if ((state.screen === 'home' || state.screen === 'plan-detail') && !api.isLoggedIn()) {
     state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
   }
   root.innerHTML = '';
