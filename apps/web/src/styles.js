@@ -283,6 +283,14 @@ button { cursor: pointer; }
   background: linear-gradient(145deg, var(--accent), color-mix(in oklch, var(--accent) 45%, oklch(0.5 0.07 230)));
   box-shadow: 0 10px 28px var(--glow);
 }
+.auth-hero .mark-img {
+  width: 48px; height: 48px; flex-shrink: 0;
+  border-radius: 14px;
+  object-fit: cover;
+  display: block;
+  box-shadow: 0 10px 28px color-mix(in oklch, oklch(0.45 0.08 250) 35%, transparent);
+  border: 1px solid color-mix(in oklch, white 12%, transparent);
+}
 .auth-hero .product {
   font-family: var(--font-display);
   font-weight: 800; font-size: 1.35rem;

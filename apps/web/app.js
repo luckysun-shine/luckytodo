@@ -276,7 +276,14 @@ const ICONS_EYE = {
 function authHero({ title, lead, tag = '家庭待办 · 本机优先' }) {
   return h('header', { className: 'auth-hero' }, [
     h('div', { className: 'wordmark' }, [
-      h('div', { className: 'mark', text: 'L', 'aria-hidden': 'true' }),
+      h('img', {
+        className: 'mark-img',
+        src: './public/logo.png',
+        alt: 'LuckyTodo',
+        width: '48',
+        height: '48',
+        decoding: 'async',
+      }),
       h('div', {}, [
         h('div', { className: 'product', text: 'LuckyTodo' }),
         h('p', { className: 'tag', text: tag }),
@@ -1896,7 +1903,7 @@ function renderCreateMenu() {
         ['note', '便签', '短记录，稍后再转待办', icons.today],
         ['todo', '待办', '截止、提醒与执行人', icons.plans],
         ['event', '日程', '占用一段时间的安排', icons.cal],
-        ['plan', '计划', '周期打卡，多人各自完成', icons.insights],
+        ['plan', '计划', '周期打卡，可加里程碑节点', icons.insights],
       ];
   // fix icons - note should use a note-like; use available set
   items[0][3] = icons.today;
