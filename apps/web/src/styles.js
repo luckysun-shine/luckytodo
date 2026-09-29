@@ -259,11 +259,142 @@ button { cursor: pointer; }
 
 .auth {
   flex: 1; display: flex; flex-direction: column;
-  padding: calc(28px + env(safe-area-inset-top)) var(--space-5) calc(28px + env(safe-area-inset-bottom));
+  padding: calc(20px + env(safe-area-inset-top)) var(--space-5) calc(24px + env(safe-area-inset-bottom));
+  position: relative;
+  overflow: auto;
 }
-.brand {
-  margin: 12px 0 28px;
+.auth-shell {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+  position: relative; z-index: 1;
 }
+.auth-hero {
+  display: grid; gap: var(--space-3);
+  margin: 8px 0 28px;
+  animation: auth-in .5s var(--ease) both;
+}
+.auth-hero .wordmark {
+  display: flex; align-items: center; gap: 12px;
+}
+.auth-hero .mark {
+  width: 44px; height: 44px; border-radius: 14px; flex-shrink: 0;
+  display: grid; place-items: center;
+  font-family: var(--font-display); font-weight: 800; font-size: 1.2rem;
+  color: var(--on-accent);
+  background: linear-gradient(145deg, var(--accent), color-mix(in oklch, var(--accent) 45%, oklch(0.5 0.07 230)));
+  box-shadow: 0 10px 28px var(--glow);
+}
+.auth-hero .product {
+  font-family: var(--font-display);
+  font-weight: 800; font-size: 1.35rem;
+  letter-spacing: -0.03em; line-height: 1;
+  color: var(--text);
+}
+.auth-hero .tag {
+  margin: 0; font-size: 0.75rem; font-weight: 600;
+  color: var(--accent-strong);
+  letter-spacing: 0.02em;
+}
+.auth-hero h1 {
+  margin: 8px 0 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.85rem, 7vw, 2.25rem);
+  font-weight: 800; letter-spacing: -0.04em; line-height: 1.12;
+}
+.auth-hero p.lead {
+  margin: 0; color: var(--muted); font-size: 0.95rem; line-height: 1.5;
+  max-width: 32ch;
+}
+.auth-panel {
+  display: grid; gap: var(--space-4);
+  animation: auth-in .55s var(--ease) .06s both;
+}
+.auth-panel .field { margin: 0; }
+.auth-panel .field label {
+  font-size: 0.8rem; font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.auth-panel .field input {
+  min-height: 48px;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: color-mix(in oklch, var(--field) 88%, transparent);
+  backdrop-filter: blur(8px);
+}
+.field-password { position: relative; }
+.field-password input { padding-right: 48px; }
+.field-password .eye {
+  position: absolute; right: 6px; bottom: 6px;
+  width: 36px; height: 36px; border: 0; border-radius: 10px;
+  background: transparent; color: var(--muted);
+  display: grid; place-items: center;
+  transition: color .15s var(--ease), background .15s var(--ease);
+}
+.field-password .eye:hover { color: var(--text); background: color-mix(in oklch, var(--text) 6%, transparent); }
+.field-password .eye svg { width: 18px; height: 18px; }
+.field .hint {
+  margin: 0; font-size: 0.75rem; color: var(--muted); line-height: 1.35;
+}
+.field .err-inline {
+  margin: 0; font-size: 0.78rem; color: var(--miss); font-weight: 550;
+}
+.auth-cta {
+  display: grid; gap: var(--space-3);
+  margin-top: var(--space-5);
+  animation: auth-in .55s var(--ease) .12s both;
+}
+.auth-cta .btn.lg {
+  min-height: 52px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: 0 10px 28px var(--glow);
+}
+.auth-switch {
+  text-align: center;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.auth-switch button {
+  border: 0; background: none; padding: 0;
+  color: var(--accent-strong); font-weight: 700;
+  text-decoration: underline; text-underline-offset: 3px;
+  text-decoration-color: color-mix(in oklch, var(--accent) 45%, transparent);
+}
+.auth-foot {
+  margin-top: auto;
+  padding-top: var(--space-6);
+  display: grid; gap: var(--space-3);
+  justify-items: start;
+  animation: auth-in .55s var(--ease) .18s both;
+}
+.auth-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: color-mix(in oklch, var(--bg-elev) 70%, transparent);
+  color: var(--muted);
+  font-size: 0.78rem; font-weight: 550;
+}
+.auth-chip .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
+}
+.auth-back {
+  border: 0; background: transparent; color: var(--muted);
+  font-size: 0.88rem; font-weight: 600;
+  padding: 8px 0; margin: 0 0 8px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.auth-back:hover { color: var(--text); }
+@keyframes auth-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* legacy brand used by connect/setup/merge until fully migrated */
+.brand { margin: 12px 0 28px; }
 .brand .mark {
   width: 48px; height: 48px; border-radius: 16px;
   display: grid; place-items: center;

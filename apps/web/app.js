@@ -267,247 +267,387 @@ async function boot() {
   maybeSync().then(render);
 }
 
-function renderLocalRegister() {
-  const fields = {};
-  const field = (key, label, type = 'text') => {
-    fields[key] = h('input', {
-      type,
-      autocomplete: key.includes('pass') ? 'new-password' : key === 'username' ? 'username' : 'nickname',
-    });
-    return h('div', { className: 'field' }, [h('label', { text: label }), fields[key]]);
-  };
-  return h('div', { className: 'screen auth' }, [
-    h('div', { className: 'brand' }, [
-      h('div', { className: 'mark', text: 'L' }),
-      h('h1', { text: '创建本机账号' }),
-      h('p', { text: '首次使用需要登录。可不连接 NAS，本机离线使用；之后可在「我的」里连接家庭服务器做同步。' }),
+const ICONS_EYE = {
+  show: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  hide: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l18 18"/><path d="M10.6 10.6a2.5 2.5 0 0 0 3.5 3.5"/><path d="M9.9 5.2A10.6 10.6 0 0 1 12 5c6.5 0 10 7 10 7a17.5 17.5 0 0 1-3.2 4.3"/><path d="M6.1 6.1C4 7.8 2.5 10.2 2 12c0 0 3.5 7 10 7a10.4 10.4 0 0 0 4.3-.9"/></svg>',
+};
+
+function authHero({ title, lead, tag = '家庭待办 · 本机优先' }) {
+  return h('header', { className: 'auth-hero' }, [
+    h('div', { className: 'wordmark' }, [
+      h('div', { className: 'mark', text: 'L', 'aria-hidden': 'true' }),
+      h('div', {}, [
+        h('div', { className: 'product', text: 'LuckyTodo' }),
+        h('p', { className: 'tag', text: tag }),
+      ]),
     ]),
-    field('displayName', '显示名'),
-    field('username', '用户名（小写字母数字）'),
-    field('password', '密码（至少 6 位）', 'password'),
-    field('password2', '再输入一次密码', 'password'),
-    h('div', { className: 'auth-actions' }, [
-      h('button', {
-        className: 'btn lg block',
-        text: '创建并进入',
-        onClick: async () => {
-          if (fields.password.value !== fields.password2.value) return toast('两次密码不一致');
-          try {
-            await api.createLocalAccount({
-              displayName: fields.displayName.value,
-              username: fields.username.value,
-              password: fields.password.value,
-            });
-            await afterLocalLogin();
-          } catch (e) {
-            toast(e.message);
-          }
-        },
-      }),
-      api.hasLocalAccounts()
-        ? h('button', {
-            className: 'btn ghost block',
-            text: '已有本机账号，去登录',
-            onClick: () => {
-              state.screen = 'local-login';
-              render();
-            },
-          })
-        : null,
+    h('h1', { text: title }),
+    h('p', { className: 'lead', text: lead }),
+  ]);
+}
+
+function authPasswordField(label, { autocomplete = 'current-password', hint } = {}) {
+  const input = h('input', { type: 'password', autocomplete });
+  let shown = false;
+  const eye = h('button', {
+    type: 'button',
+    className: 'eye',
+    'aria-label': '显示密码',
+    html: ICONS_EYE.show,
+    onClick: () => {
+      shown = !shown;
+      input.type = shown ? 'text' : 'password';
+      eye.setAttribute('aria-label', shown ? '隐藏密码' : '显示密码');
+      eye.innerHTML = shown ? ICONS_EYE.hide : ICONS_EYE.show;
+    },
+  });
+  return {
+    input,
+    el: h('div', { className: 'field field-password' }, [
+      h('label', { text: label }),
+      input,
+      eye,
+      hint ? h('p', { className: 'hint', text: hint }) : null,
+    ]),
+  };
+}
+
+function authTextField(label, { type = 'text', autocomplete = 'off', placeholder = '', hint } = {}) {
+  const input = h('input', { type, autocomplete, placeholder });
+  return {
+    input,
+    el: h('div', { className: 'field' }, [
+      h('label', { text: label }),
+      input,
+      hint ? h('p', { className: 'hint', text: hint }) : null,
+    ]),
+  };
+}
+
+function authShell({ hero, panel, cta, foot, back, onSubmit }) {
+  const shell = h('div', { className: 'screen auth' }, [
+    h('div', { className: 'auth-shell' }, [
+      back || null,
+      hero,
+      h('div', { className: 'auth-panel' }, panel),
+      h('div', { className: 'auth-cta' }, cta),
+      foot ? h('div', { className: 'auth-foot' }, foot) : null,
     ]),
   ]);
+  if (typeof onSubmit === 'function') {
+    shell.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+        e.preventDefault();
+        onSubmit();
+      }
+    });
+  }
+  return shell;
+}
+
+function setBusy(btn, busy, idleText) {
+  btn.disabled = !!busy;
+  btn.textContent = busy || idleText;
+}
+
+function renderLocalRegister() {
+  const name = authTextField('怎么称呼你', {
+    autocomplete: 'nickname',
+    placeholder: '例如：小明',
+    hint: '显示在问候语和待办里',
+  });
+  const user = authTextField('用户名', {
+    autocomplete: 'username',
+    placeholder: '小写字母或数字',
+    hint: '3–20 位，登录时使用',
+  });
+  const pass = authPasswordField('设置密码', {
+    autocomplete: 'new-password',
+    hint: '至少 6 位',
+  });
+  const pass2 = authPasswordField('确认密码', { autocomplete: 'new-password' });
+  const doRegister = async () => {
+    if (!name.input.value.trim()) return toast('请填写称呼');
+    if (pass.input.value !== pass2.input.value) return toast('两次密码不一致');
+    setBusy(submit, '创建中…', '创建账号');
+    try {
+      await api.createLocalAccount({
+        displayName: name.input.value,
+        username: user.input.value,
+        password: pass.input.value,
+      });
+      await afterLocalLogin();
+    } catch (e) {
+      toast(e.message);
+      setBusy(submit, null, '创建账号');
+    }
+  };
+  const submit = h('button', {
+    className: 'btn lg block',
+    text: '创建账号',
+    onClick: doRegister,
+  });
+
+  return authShell({
+    hero: authHero({
+      title: '创建你的账号',
+      lead: '先完成本机注册即可开始使用。家庭服务器可以以后再连，不影响日常记录。',
+      tag: '首次使用 · 本机账号',
+    }),
+    panel: [name.el, user.el, pass.el, pass2.el],
+    cta: [
+      submit,
+      h('p', { className: 'auth-switch' }, [
+        '已有账号？',
+        h('button', {
+          type: 'button',
+          text: '去登录',
+          onClick: () => {
+            state.screen = 'local-login';
+            render();
+          },
+        }),
+      ]),
+    ],
+    foot: [
+      h('div', { className: 'auth-chip' }, [
+        h('span', { className: 'dot', 'aria-hidden': 'true' }),
+        h('span', { text: '数据默认保存在本机，不强制联网' }),
+      ]),
+    ],
+    onSubmit: doRegister,
+  });
 }
 
 function renderLocalLogin() {
-  const user = h('input', { autocomplete: 'username' });
-  const pass = h('input', { type: 'password', autocomplete: 'current-password' });
-  return h('div', { className: 'screen auth' }, [
-    h('div', { className: 'brand' }, [
-      h('div', { className: 'mark', text: 'L' }),
-      h('h1', { text: '登录' }),
-      h('p', { text: '使用本机账号登录。未连接家庭服务器时，数据只保存在这台设备。' }),
-    ]),
-    h('div', { className: 'field' }, [h('label', { text: '用户名' }), user]),
-    h('div', { className: 'field' }, [h('label', { text: '密码' }), pass]),
-    h('div', { className: 'auth-actions' }, [
-      h('button', {
-        className: 'btn lg block',
-        text: '登录',
-        onClick: async () => {
-          if (!user.value.trim()) return toast('请填写用户名');
-          try {
-            await api.loginLocalAccount({ username: user.value, password: pass.value });
-            await afterLocalLogin();
-          } catch (e) {
-            toast(e.message);
-          }
-        },
-      }),
-      h('button', {
-        className: 'btn secondary block',
-        text: '创建新的本机账号',
-        onClick: () => {
-          state.screen = 'local-register';
-          render();
-        },
-      }),
-    ]),
-  ]);
+  const user = authTextField('用户名', {
+    autocomplete: 'username',
+    placeholder: '输入用户名',
+  });
+  const pass = authPasswordField('密码', { autocomplete: 'current-password' });
+  const doLogin = async () => {
+    if (!user.input.value.trim()) return toast('请填写用户名');
+    if (!pass.input.value) return toast('请填写密码');
+    setBusy(submit, '登录中…', '登录');
+    try {
+      await api.loginLocalAccount({ username: user.input.value, password: pass.input.value });
+      await afterLocalLogin();
+    } catch (e) {
+      toast(e.message);
+      setBusy(submit, null, '登录');
+    }
+  };
+  const submit = h('button', {
+    className: 'btn lg block',
+    text: '登录',
+    onClick: doLogin,
+  });
+
+  return authShell({
+    hero: authHero({
+      title: '欢迎回来',
+      lead: '登录本机账号，继续管理待办、日程与家庭计划。',
+      tag: '本机账号',
+    }),
+    panel: [user.el, pass.el],
+    cta: [
+      submit,
+      h('p', { className: 'auth-switch' }, [
+        '还没有账号？',
+        h('button', {
+          type: 'button',
+          text: '立即注册',
+          onClick: () => {
+            state.screen = 'local-register';
+            render();
+          },
+        }),
+      ]),
+    ],
+    foot: [
+      h('div', { className: 'auth-chip' }, [
+        h('span', { className: 'dot', 'aria-hidden': 'true' }),
+        h('span', { text: '未连接家庭服务器时，仅本机可用' }),
+      ]),
+    ],
+    onSubmit: doLogin,
+  });
 }
 
 function renderConnect() {
-  const urlInput = h('input', {
-    value: api.apiBase() || 'https://',
-    placeholder: 'https://todo.home.example.com',
+  const url = authTextField('服务器地址', {
+    type: 'url',
     autocomplete: 'url',
-    inputmode: 'url',
+    placeholder: 'https://todo.home.example.com',
+    hint: '请填写飞牛 NAS 上的 HTTPS 地址',
   });
-  return h('div', { className: 'screen auth' }, [
-    h('div', { className: 'brand' }, [
-      h('div', { className: 'mark', text: 'L' }),
-      h('h1', { text: '连接家庭服务器' }),
-      h('p', { text: '填写飞牛上的 HTTPS 地址后，才能多账号关联与多端同步。也可稍后再连。' }),
-    ]),
-    h('div', { className: 'field' }, [h('label', { text: '服务器地址（HTTPS）' }), urlInput]),
-    h('div', { className: 'auth-actions' }, [
-      h('button', {
-        className: 'btn lg block',
-        text: '检查并继续',
-        onClick: async () => {
-          const url = urlInput.value.trim().replace(/\/$/, '');
-          if (!url) return toast('请填写服务器地址');
-          if (!/^https:\/\//i.test(url) && location.hostname !== '127.0.0.1' && location.hostname !== 'localhost') {
-            toast('请使用 HTTPS 地址');
-          }
-          api.setApiBase(url);
-          try {
-            const health = await api.health();
-            toast(health.initialized ? '已连接，请登录家庭账号' : '已连接，可以创建家庭');
-            state.health = health;
-            state.screen = health.initialized ? 'family-login' : 'setup';
-            render();
-          } catch (e) {
-            toast(e.message || '连不上服务器，请检查地址与网络');
-          }
-        },
-      }),
-      h('button', {
-        className: 'btn ghost block',
-        text: '返回',
-        onClick: () => {
-          state.screen = api.isLoggedIn() ? 'home' : api.hasLocalAccounts() ? 'local-login' : 'local-register';
-          if (state.screen === 'home') state.tab = 'me';
-          render();
-        },
-      }),
-    ]),
-  ]);
+  url.input.value = api.apiBase() || 'https://';
+  url.input.setAttribute('inputmode', 'url');
+  const submit = h('button', {
+    className: 'btn lg block',
+    text: '检查并继续',
+    onClick: async () => {
+      const val = url.input.value.trim().replace(/\/$/, '');
+      if (!val) return toast('请填写服务器地址');
+      if (!/^https:\/\//i.test(val) && location.hostname !== '127.0.0.1' && location.hostname !== 'localhost') {
+        toast('请使用 HTTPS 地址');
+      }
+      api.setApiBase(val);
+      setBusy(submit, '连接中…', '检查并继续');
+      try {
+        const health = await api.health();
+        toast(health.initialized ? '已连接，请登录家庭账号' : '已连接，可以创建家庭');
+        state.health = health;
+        state.screen = health.initialized ? 'family-login' : 'setup';
+        render();
+      } catch (e) {
+        toast(e.message || '连不上服务器，请检查地址与网络');
+        setBusy(submit, null, '检查并继续');
+      }
+    },
+  });
+
+  return authShell({
+    back: h('button', {
+      type: 'button',
+      className: 'auth-back',
+      text: '← 返回',
+      onClick: () => {
+        state.screen = api.isLoggedIn() ? 'home' : api.hasLocalAccounts() ? 'local-login' : 'local-register';
+        if (state.screen === 'home') state.tab = 'me';
+        render();
+      },
+    }),
+    hero: authHero({
+      title: '连接家庭服务器',
+      lead: '连上 NAS 后，家人可共用账号空间，并在多台设备间同步。',
+      tag: '可选 · 家庭同步',
+    }),
+    panel: [url.el],
+    cta: [submit],
+    foot: [
+      h('div', { className: 'auth-chip' }, [
+        h('span', { className: 'dot', 'aria-hidden': 'true' }),
+        h('span', { text: '不连也可以，继续本机离线使用' }),
+      ]),
+    ],
+  });
 }
 
 function renderSetup() {
-  const fields = {};
-  const field = (key, label, type = 'text') => {
-    fields[key] = h('input', {
-      type,
-      autocomplete: key.includes('pass') ? 'new-password' : 'off',
-    });
-    return h('div', { className: 'field' }, [h('label', { text: label }), fields[key]]);
-  };
-  return h('div', { className: 'screen auth' }, [
-    h('div', { className: 'brand' }, [
-      h('div', { className: 'mark', text: 'L' }),
-      h('h1', { text: '创建家庭' }),
-      h('p', { text: '在 NAS 上创建家庭空间。你将成为管理员。时区：中国标准时间。' }),
-    ]),
-    field('familyName', '家庭名称'),
-    field('displayName', '你的显示名'),
-    field('username', '用户名（小写字母数字）'),
-    field('password', '密码（至少 6 位）', 'password'),
-    field('password2', '再输入一次密码', 'password'),
-    h('div', { className: 'auth-actions' }, [
-      h('button', {
-        className: 'btn lg block',
-        text: '创建家庭并进入',
-        onClick: async () => {
-          if (fields.password.value !== fields.password2.value) return toast('两次密码不一致');
-          try {
-            const session = await api.api('POST', '/api/setup/family', {
-              token: '',
-              body: {
-                familyName: fields.familyName.value,
-                displayName: fields.displayName.value,
-                username: fields.username.value,
-                password: fields.password.value,
-              },
-            });
-            await afterLogin(session);
-          } catch (e) {
-            toast(e.message);
-          }
-        },
-      }),
-      h('button', {
-        className: 'btn ghost block',
-        text: '返回',
-        onClick: () => {
-          state.screen = 'connect';
-          render();
-        },
-      }),
-    ]),
-  ]);
+  const familyName = authTextField('家庭名称', {
+    autocomplete: 'organization',
+    placeholder: '例如：我们家',
+  });
+  const displayName = authTextField('你的显示名', {
+    autocomplete: 'nickname',
+    placeholder: '家人看到的名字',
+  });
+  const username = authTextField('用户名', {
+    autocomplete: 'username',
+    placeholder: '小写字母或数字',
+    hint: '3–20 位',
+  });
+  const password = authPasswordField('设置密码', {
+    autocomplete: 'new-password',
+    hint: '至少 6 位',
+  });
+  const password2 = authPasswordField('确认密码', { autocomplete: 'new-password' });
+  const submit = h('button', {
+    className: 'btn lg block',
+    text: '创建家庭',
+    onClick: async () => {
+      if (password.input.value !== password2.input.value) return toast('两次密码不一致');
+      setBusy(submit, '创建中…', '创建家庭');
+      try {
+        const session = await api.api('POST', '/api/setup/family', {
+          token: '',
+          body: {
+            familyName: familyName.input.value,
+            displayName: displayName.input.value,
+            username: username.input.value,
+            password: password.input.value,
+          },
+        });
+        await afterLogin(session);
+      } catch (e) {
+        toast(e.message);
+        setBusy(submit, null, '创建家庭');
+      }
+    },
+  });
+
+  return authShell({
+    back: h('button', {
+      type: 'button',
+      className: 'auth-back',
+      text: '← 更换服务器',
+      onClick: () => {
+        state.screen = 'connect';
+        render();
+      },
+    }),
+    hero: authHero({
+      title: '创建家庭空间',
+      lead: '在 NAS 上建立家庭，你将成为管理员。时区为中国标准时间。',
+      tag: '家庭服务器',
+    }),
+    panel: [familyName.el, displayName.el, username.el, password.el, password2.el],
+    cta: [submit],
+  });
 }
 
 function renderFamilyLogin() {
-  const user = h('input', { autocomplete: 'username' });
-  const pass = h('input', { type: 'password', autocomplete: 'current-password' });
-  return h('div', { className: 'screen auth' }, [
-    h('div', { className: 'brand' }, [
-      h('div', { className: 'mark', text: 'L' }),
-      h('h1', { text: '登录家庭账号' }),
-      h('p', { text: `服务器：${api.apiBase() || '未设置'}。登录后可同步与多账号关联。` }),
-    ]),
-    h('div', { className: 'field' }, [h('label', { text: '用户名' }), user]),
-    h('div', { className: 'field' }, [h('label', { text: '密码' }), pass]),
-    h('div', { className: 'auth-actions' }, [
-      h('button', {
-        className: 'btn lg block',
-        text: '登录家庭账号',
-        onClick: async () => {
-          if (!user.value.trim()) return toast('请填写用户名');
-          try {
-            const session = await api.api('POST', '/api/auth/login', {
-              token: '',
-              body: { username: user.value, password: pass.value },
-            });
-            await afterLogin(session);
-          } catch (e) {
-            toast(e.message);
-          }
-        },
-      }),
-      h('button', {
-        className: 'btn ghost block',
-        text: '更换服务器',
-        onClick: () => {
-          state.screen = 'connect';
-          render();
-        },
-      }),
-    ]),
-  ]);
+  const user = authTextField('用户名', { autocomplete: 'username', placeholder: '家庭账号用户名' });
+  const pass = authPasswordField('密码', { autocomplete: 'current-password' });
+  const submit = h('button', {
+    className: 'btn lg block',
+    text: '登录',
+    onClick: async () => {
+      if (!user.input.value.trim()) return toast('请填写用户名');
+      setBusy(submit, '登录中…', '登录');
+      try {
+        const session = await api.api('POST', '/api/auth/login', {
+          token: '',
+          body: { username: user.input.value, password: pass.input.value },
+        });
+        await afterLogin(session);
+      } catch (e) {
+        toast(e.message);
+        setBusy(submit, null, '登录');
+      }
+    },
+  });
+
+  return authShell({
+    back: h('button', {
+      type: 'button',
+      className: 'auth-back',
+      text: '← 更换服务器',
+      onClick: () => {
+        state.screen = 'connect';
+        render();
+      },
+    }),
+    hero: authHero({
+      title: '登录家庭账号',
+      lead: '登录后可与家人关联，并在联网时自动同步。',
+      tag: api.apiBase() ? `服务器 · ${api.apiBase().replace(/^https?:\/\//, '')}` : '家庭服务器',
+    }),
+    panel: [user.el, pass.el],
+    cta: [submit],
+  });
 }
 
 function renderMerge() {
-  return h('div', { className: 'screen auth' }, [
-    h('div', { className: 'brand' }, [
-      h('div', { className: 'mark', text: '⇄' }),
-      h('h1', { text: '合并本机记录？' }),
-      h('p', {
-        text: `检测到本机有 ${state.mergeCount || 0} 条离线记录。合并后进入当前家庭账号，联网后自动同步。`,
-      }),
-    ]),
-    h('div', { className: 'auth-actions' }, [
+  return authShell({
+    hero: authHero({
+      title: '合并本机记录？',
+      lead: `检测到本机有 ${state.mergeCount || 0} 条离线记录。合并后归入当前家庭账号，联网后自动同步。`,
+      tag: '数据合并',
+    }),
+    panel: [],
+    cta: [
       h('button', {
         className: 'btn lg block',
         text: '合并到当前账号',
@@ -538,8 +678,8 @@ function renderMerge() {
           render();
         },
       }),
-    ]),
-  ]);
+    ],
+  });
 }
 
 function tabs() {
