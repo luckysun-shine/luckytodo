@@ -47,7 +47,7 @@ cd deploy && docker compose up -d --build
 
 ## 打 IPA（macOS + Xcode / 全能签）
 
-本仓库已包含 `ios/` Capacitor 工程与 App Icon。
+本仓库已包含 `ios/` Capacitor 工程与 App Icon。**完整步骤见 [`ios/PACKAGING.md`](./ios/PACKAGING.md)**（签名、Archive、全能签、组件注意点）。
 
 ```bash
 npm install
@@ -55,7 +55,7 @@ npx cap sync ios
 npx cap open ios
 ```
 
-在 Xcode 中 Archive 导出 IPA，再用全能签签名安装。
+在 Xcode 中为 **App** 与 **LuckyTodoWidgetExtension** 配置同一 Signing Team 后 Archive 导出 IPA，再用全能签签名安装。
 
 - 提醒：原生端用 Local Notifications；浏览器/PWA 用 Web Notification。
 - 重签名场景下不以 APNs 推送为准。
