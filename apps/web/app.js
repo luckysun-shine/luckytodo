@@ -8,6 +8,14 @@ style.textContent = css;
 document.head.appendChild(style);
 
 const root = document.getElementById('app');
+
+function dayKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 const state = {
   tab: 'today',
   online: navigator.onLine,
@@ -19,6 +27,12 @@ const state = {
   members: [],
   hideBanner: sessionStorage.getItem('lt_hide_banner') === '1',
   mergeCount: 0,
+  calCursor: (() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  })(),
+  calSelected: dayKey(new Date()),
+  calExpanded: localStorage.getItem('lt_cal_expanded') !== '0',
 };
 
 window.addEventListener('online', () => {
@@ -115,10 +129,6 @@ function roleLabel(role) {
   return { admin: '管理员', parent: '家长', adult: '成人', child: '儿童' }[role] || role;
 }
 
-function dayKey(d) {
-  return d.toISOString().slice(0, 10);
-}
-
 function fmt(iso) {
   try {
     return new Date(iso).toLocaleString('zh-CN', { hour12: false });
@@ -138,6 +148,88 @@ function hello() {
   if (h < 14) return '中午好';
   if (h < 18) return '下午好';
   return '晚上好';
+}
+
+function localDayKeyFromIso(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0, 10);
+  return dayKey(d);
+}
+
+function buildMonthCells(cursor) {
+  const year = cursor.getFullYear();
+  const month = cursor.getMonth();
+  const first = new Date(year, month, 1);
+  // Monday-first: 0=Mon ... 6=Sun
+  const startPad = (first.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startPad; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
+  while (cells.length % 7 !== 0) cells.push(null);
+  return cells;
+}
+
+function bindCalPull(handle, panel) {
+  let startY = 0;
+  let dragging = false;
+  const threshold = 48;
+
+  const onStart = (y) => {
+    dragging = true;
+    startY = y;
+    handle.classList.add('pulling');
+  };
+  const onMove = (y, e) => {
+    if (!dragging) return;
+    const dy = y - startY;
+    // visual hint
+    const tip = Math.max(-24, Math.min(24, dy * 0.25));
+    handle.style.transform = `translateY(${tip}px)`;
+    if (e?.cancelable) e.preventDefault();
+  };
+  const onEnd = (y) => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('pulling');
+    handle.style.transform = '';
+    const dy = y - startY;
+    if (dy < -threshold && state.calExpanded) {
+      state.calExpanded = false;
+      localStorage.setItem('lt_cal_expanded', '0');
+      render();
+    } else if (dy > threshold && !state.calExpanded) {
+      state.calExpanded = true;
+      localStorage.setItem('lt_cal_expanded', '1');
+      render();
+    }
+  };
+
+  handle.addEventListener('touchstart', (e) => onStart(e.touches[0].clientY), { passive: true });
+  handle.addEventListener('touchmove', (e) => onMove(e.touches[0].clientY, e), { passive: false });
+  handle.addEventListener('touchend', (e) => onEnd(e.changedTouches[0].clientY));
+  handle.addEventListener('mousedown', (e) => {
+    onStart(e.clientY);
+    const move = (ev) => onMove(ev.clientY, ev);
+    const up = (ev) => {
+      onEnd(ev.clientY);
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+
+  // also allow pull on the calendar panel itself when expanded
+  if (panel) {
+    panel.addEventListener('touchstart', (e) => {
+      if (e.target.closest('button')) return;
+      onStart(e.touches[0].clientY);
+    }, { passive: true });
+    panel.addEventListener('touchmove', (e) => onMove(e.touches[0].clientY, e), { passive: false });
+    panel.addEventListener('touchend', (e) => onEnd(e.changedTouches[0].clientY));
+  }
 }
 
 function visibilityLabel(v) {
@@ -551,31 +643,165 @@ async function renderTodayBody() {
 async function renderCalBody() {
   const events = await listActive('event');
   const todos = (await listActive('todo')).filter((t) => t.payload.dueAt);
-  const wrap = h('div');
-  const items = [
-    ...events.map((e) => ({ title: e.payload.title, when: e.payload.startAt, kind: '日程' })),
-    ...todos.map((t) => ({ title: t.payload.title, when: t.payload.dueAt, kind: '待办' })),
-  ].sort((a, b) => String(a.when).localeCompare(String(b.when)));
+  const plans = (await listActive('plan')).filter((p) => !p.payload.archived);
 
-  appendNodes(wrap, h('div', { className: 'section-label', text: '即将到来' }));
-  if (!items.length) {
+  const marked = new Set();
+  const byDay = {};
+  const pushItem = (key, item) => {
+    if (!key) return;
+    marked.add(key);
+    (byDay[key] ||= []).push(item);
+  };
+  for (const e of events) {
+    const key = localDayKeyFromIso(e.payload.startAt);
+    pushItem(key, { title: e.payload.title, when: e.payload.startAt, kind: '日程', sort: e.payload.startAt });
+  }
+  for (const t of todos) {
+    const key = localDayKeyFromIso(t.payload.dueAt);
+    pushItem(key, { title: t.payload.title, when: t.payload.dueAt, kind: '待办', sort: t.payload.dueAt });
+  }
+  // daily plans mark today and selected day lightly via reminder presence — mark all days in view? skip; only show in list if selected is today
+  const todayKey = dayKey(new Date());
+  if (plans.length) marked.add(todayKey);
+
+  const cursor = state.calCursor;
+  const selected = state.calSelected;
+  const expanded = state.calExpanded;
+  const cells = buildMonthCells(cursor);
+  const monthLabel = `${cursor.getFullYear()}年${cursor.getMonth() + 1}月`;
+
+  const wrap = h('div', { className: 'cal-page' });
+  const panel = h('section', {
+    className: `cal-panel ${expanded ? 'is-open' : 'is-closed'}`,
+    'aria-expanded': expanded,
+  });
+
+  const header = h('div', { className: 'cal-head' }, [
+    h('button', {
+      className: 'icon-btn',
+      'aria-label': '上个月',
+      html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg>',
+      onClick: () => {
+        state.calCursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);
+        render();
+      },
+    }),
+    h('div', { className: 'cal-month grow' }, [
+      h('h2', { text: monthLabel }),
+      h('p', { className: 'muted', text: expanded ? '上拉收起日历' : '下拉展开日历' }),
+    ]),
+    h('button', {
+      className: 'icon-btn',
+      'aria-label': '下个月',
+      html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>',
+      onClick: () => {
+        state.calCursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+        render();
+      },
+    }),
+  ]);
+
+  const weekRow = h('div', { className: 'cal-weekdays' }, ['一', '二', '三', '四', '五', '六', '日'].map((w) => h('span', { text: w })));
+  const grid = h('div', { className: 'cal-grid' });
+  for (const cell of cells) {
+    if (!cell) {
+      grid.append(h('span', { className: 'cal-cell muted', text: '' }));
+      continue;
+    }
+    const key = dayKey(cell);
+    const isToday = key === todayKey;
+    const isSel = key === selected;
+    const hasMark = marked.has(key);
+    grid.append(
+      h('button', {
+        type: 'button',
+        className: `cal-cell ${isToday ? 'today' : ''} ${isSel ? 'sel' : ''} ${hasMark ? 'mark' : ''}`,
+        text: String(cell.getDate()),
+        'aria-label': `${key}${hasMark ? '，有事项' : ''}`,
+        'aria-pressed': isSel,
+        onClick: () => {
+          state.calSelected = key;
+          render();
+        },
+      })
+    );
+  }
+
+  appendNodes(panel, header, h('div', { className: 'cal-body' }, [weekRow, grid]));
+
+  const handle = h('button', {
+    type: 'button',
+    className: 'cal-pull',
+    'aria-label': expanded ? '上拉收起日历' : '下拉展开日历',
+    html: `<span class="cal-pull-bar"></span><span class="cal-pull-hint">${expanded ? '上拉隐藏' : '下拉展示'}</span>`,
+    onClick: () => {
+      state.calExpanded = !state.calExpanded;
+      localStorage.setItem('lt_cal_expanded', state.calExpanded ? '1' : '0');
+      render();
+    },
+  });
+
+  const dayItems = (byDay[selected] || []).sort((a, b) => String(a.sort).localeCompare(String(b.sort)));
+  const list = h('div', { className: 'cal-day-list' });
+  const selDate = new Date(selected + 'T12:00:00');
+  appendNodes(
+    list,
+    h('div', { className: 'section-label', text: `${selDate.getMonth() + 1}月${selDate.getDate()}日 · 事项` })
+  );
+  if (!dayItems.length) {
     appendNodes(
-      wrap,
-      emptyState('日历还是空的', '给待办加截止时间，或新建日程，就会出现在这里。', '新建日程', () => {
+      list,
+      emptyState('这天还没有安排', '点右下角新建日程，或给待办加上截止日。', '新建日程', () => {
         state.form = { type: 'event', title: '', body: '', visibility: 'self', attachments: [] };
         render();
       })
     );
+  } else {
+    for (const it of dayItems) {
+      appendNodes(
+        list,
+        h('div', { className: 'card' }, [
+          h('h3', { text: it.title }),
+          h('p', { text: `${it.kind} · ${fmt(it.when)}` }),
+        ])
+      );
+    }
   }
-  for (const it of items) {
-    appendNodes(
-      wrap,
-      h('div', { className: 'card' }, [
-        h('h3', { text: it.title }),
-        h('p', { text: `${it.kind} · ${fmt(it.when)}` }),
-      ])
-    );
+
+  // upcoming strip when calendar collapsed — still useful
+  if (!expanded) {
+    const upcoming = Object.keys(byDay)
+      .filter((k) => k >= todayKey)
+      .sort()
+      .slice(0, 5)
+      .flatMap((k) => byDay[k].map((it) => ({ ...it, day: k })));
+    if (upcoming.length) {
+      appendNodes(list, h('div', { className: 'section-label', text: '即将到来' }));
+      for (const it of upcoming.slice(0, 4)) {
+        appendNodes(
+          list,
+          h('div', {
+            className: 'card pressable',
+            onClick: () => {
+              state.calSelected = it.day;
+              state.calExpanded = true;
+              localStorage.setItem('lt_cal_expanded', '1');
+              const [y, m] = it.day.split('-').map(Number);
+              state.calCursor = new Date(y, m - 1, 1);
+              render();
+            },
+          }, [
+            h('h3', { text: it.title }),
+            h('p', { text: `${it.day} · ${it.kind}` }),
+          ])
+        );
+      }
+    }
   }
+
+  appendNodes(wrap, panel, handle, list);
+  // bind after mount — render() appends then we need bind; return wrap and bind in renderHome via requestAnimationFrame
+  wrap._bindCalPull = () => bindCalPull(handle, panel.querySelector('.cal-body'));
   return wrap;
 }
 
@@ -1019,8 +1245,15 @@ function renderCreateModal() {
                 pinned: false,
               });
             } else if (f.type === 'event') {
-              const start = new Date();
-              start.setHours(start.getHours() + 1, 0, 0, 0);
+              const baseDay = state.tab === 'cal' && state.calSelected
+                ? state.calSelected
+                : dayKey(new Date());
+              const start = new Date(`${baseDay}T09:00:00`);
+              if (Number.isNaN(start.getTime()) || start.getTime() < Date.now() - 864e5) {
+                const fallback = new Date();
+                fallback.setHours(fallback.getHours() + 1, 0, 0, 0);
+                start.setTime(fallback.getTime());
+              }
               const end = new Date(start.getTime() + 3600e3);
               await api.saveLocalEntity('event', {
                 ...base,
@@ -1121,9 +1354,12 @@ async function render() {
   else if (state.screen === 'merge') view = renderMerge();
   else view = await renderHome();
   root.append(view);
-  // autofocus title in sheet
   const focusEl = root.querySelector('.sheet input');
   if (focusEl) setTimeout(() => focusEl.focus(), 50);
+  const calPage = root.querySelector('.cal-page');
+  if (calPage && typeof calPage._bindCalPull === 'function') {
+    requestAnimationFrame(() => calPage._bindCalPull());
+  }
 }
 
 boot();
