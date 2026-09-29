@@ -17,6 +17,8 @@ const state = {
   screen: 'boot',
   form: null,
   members: [],
+  hideBanner: sessionStorage.getItem('lt_hide_banner') === '1',
+  mergeCount: 0,
 };
 
 window.addEventListener('online', () => {
@@ -28,6 +30,16 @@ window.addEventListener('offline', () => {
   state.online = false;
   render();
 });
+
+const icons = {
+  today: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11h16M4 7h16M8 3v4M16 3v4"/><rect x="4" y="5" width="16" height="16" rx="3"/><path d="M8 15h3M13 15h3"/></svg>',
+  cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>',
+  plans: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M5 6h.01M5 12h.01M5 18h.01"/></svg>',
+  insights: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg>',
+  me: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>',
+  sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.3-6"/><path d="M21 3v6h-6"/></svg>',
+};
 
 function toast(msg) {
   const el = document.getElementById('toast');
@@ -103,22 +115,57 @@ function roleLabel(role) {
   return { admin: '管理员', parent: '家长', adult: '成人', child: '儿童' }[role] || role;
 }
 
+function dayKey(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+function fmt(iso) {
+  try {
+    return new Date(iso).toLocaleString('zh-CN', { hour12: false });
+  } catch {
+    return iso;
+  }
+}
+
+function fmtDateNice(d = new Date()) {
+  const w = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+  return `${d.getMonth() + 1}月${d.getDate()}日 · 周${w}`;
+}
+
+function hello() {
+  const h = new Date().getHours();
+  if (h < 11) return '早上好';
+  if (h < 14) return '中午好';
+  if (h < 18) return '下午好';
+  return '晚上好';
+}
+
+function visibilityLabel(v) {
+  return { self: '仅自己', members: '指定成员', family: '全家' }[v] || '';
+}
+
+async function listActive(type) {
+  const rows = await db.entitiesByType(type);
+  return rows.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+}
+
 async function boot() {
   applyChrome();
   const server = api.apiBase();
-  if (!server) {
-    state.screen = 'connect';
-    render();
-    return;
+  if (!server && !localStorage.getItem('lt_server')) {
+    // same-origin default still counts via apiBase()
   }
   if (!api.getToken()) {
-    // allow guest local use
     try {
-      const health = await api.health();
-      state.health = health;
-      state.screen = health.initialized ? 'login' : 'setup';
+      if (api.apiBase()) {
+        const health = await api.health();
+        state.health = health;
+        state.screen = health.initialized ? 'login' : 'setup';
+      } else {
+        state.screen = 'connect';
+      }
     } catch {
-      state.screen = 'home'; // offline guest
+      state.screen = api.apiBase() ? 'login' : 'connect';
       state.guestMode = true;
     }
     render();
@@ -135,37 +182,37 @@ function renderConnect() {
     value: api.apiBase() || 'https://',
     placeholder: 'https://todo.home.example.com',
     autocomplete: 'url',
+    inputmode: 'url',
   });
-  return h('div', { className: 'screen' }, [
-    h('div', { className: 'top' }, [h('h1', { text: 'LuckyTodo' })]),
-    h('div', { className: 'scroller' }, [
-      h('p', { className: 'muted', text: '填写飞牛上已配置 HTTPS 的家庭服务地址。' }),
-      h('div', { className: 'field' }, [h('label', { text: '服务器地址' }), urlInput]),
+  return h('div', { className: 'screen auth' }, [
+    h('div', { className: 'brand' }, [
+      h('div', { className: 'mark', text: 'L' }),
+      h('h1', { text: 'LuckyTodo' }),
+      h('p', { text: '家庭待办放在自己的 NAS 上。先连接飞牛上的服务地址。' }),
+    ]),
+    h('div', { className: 'field' }, [h('label', { text: '服务器地址（HTTPS）' }), urlInput]),
+    h('div', { className: 'auth-actions' }, [
       h('button', {
-        className: 'btn',
-        text: '检查连接',
+        className: 'btn lg block',
+        text: '检查并继续',
         onClick: async () => {
           const url = urlInput.value.trim().replace(/\/$/, '');
-          if (!/^https:\/\//i.test(url) && location.protocol === 'https:') {
-            toast('生产环境需使用 HTTPS 地址');
-            // still allow http for local dev
-          }
+          if (!url) return toast('请填写服务器地址');
           api.setApiBase(url);
           try {
             const health = await api.health();
-            toast(health.initialized ? '已连接，请登录' : '已连接，可创建家庭');
+            toast(health.initialized ? '已连接，请登录' : '已连接，可以创建家庭');
             state.health = health;
             state.screen = health.initialized ? 'login' : 'setup';
             render();
           } catch (e) {
-            toast(e.message || '连接失败');
+            toast(e.message || '连不上服务器，请检查地址与网络');
           }
         },
       }),
       h('button', {
-        className: 'btn secondary',
-        style: 'margin-top:10px;width:100%',
-        text: '先在本机使用（不登录）',
+        className: 'btn secondary block',
+        text: '先在本机试用',
         onClick: () => {
           state.guestMode = true;
           state.screen = 'home';
@@ -179,24 +226,27 @@ function renderConnect() {
 function renderSetup() {
   const fields = {};
   const field = (key, label, type = 'text') => {
-    fields[key] = h('input', { type, autocomplete: key.includes('pass') ? 'new-password' : 'off' });
+    fields[key] = h('input', {
+      type,
+      autocomplete: key.includes('pass') ? 'new-password' : 'off',
+    });
     return h('div', { className: 'field' }, [h('label', { text: label }), fields[key]]);
   };
-  return h('div', { className: 'screen' }, [
-    h('div', { className: 'top' }, [
-      h('button', { className: 'btn ghost', text: '返回', onClick: () => { state.screen = 'connect'; render(); } }),
+  return h('div', { className: 'screen auth' }, [
+    h('div', { className: 'brand' }, [
+      h('div', { className: 'mark', text: 'L' }),
       h('h1', { text: '创建家庭' }),
+      h('p', { text: '你将成为管理员。时区固定为中国标准时间。' }),
     ]),
-    h('div', { className: 'scroller' }, [
-      field('familyName', '家庭名称'),
-      field('displayName', '你的显示名'),
-      field('username', '用户名'),
-      field('password', '密码', 'password'),
-      field('password2', '确认密码', 'password'),
-      h('p', { className: 'muted', text: '时区：中国标准时间（固定）' }),
+    field('familyName', '家庭名称'),
+    field('displayName', '你的显示名'),
+    field('username', '用户名（小写字母数字）'),
+    field('password', '密码（至少 6 位）', 'password'),
+    field('password2', '再输入一次密码', 'password'),
+    h('div', { className: 'auth-actions' }, [
       h('button', {
-        className: 'btn',
-        text: '创建并进入',
+        className: 'btn lg block',
+        text: '创建家庭并进入',
         onClick: async () => {
           if (fields.password.value !== fields.password2.value) return toast('两次密码不一致');
           try {
@@ -215,6 +265,14 @@ function renderSetup() {
           }
         },
       }),
+      h('button', {
+        className: 'btn ghost block',
+        text: '返回连接',
+        onClick: () => {
+          state.screen = 'connect';
+          render();
+        },
+      }),
     ]),
   ]);
 }
@@ -222,18 +280,20 @@ function renderSetup() {
 function renderLogin() {
   const user = h('input', { autocomplete: 'username' });
   const pass = h('input', { type: 'password', autocomplete: 'current-password' });
-  return h('div', { className: 'screen' }, [
-    h('div', { className: 'top' }, [
-      h('button', { className: 'btn ghost', text: '更换服务器', onClick: () => { state.screen = 'connect'; render(); } }),
-      h('h1', { text: '登录' }),
+  return h('div', { className: 'screen auth' }, [
+    h('div', { className: 'brand' }, [
+      h('div', { className: 'mark', text: 'L' }),
+      h('h1', { text: '欢迎回家' }),
+      h('p', { text: '登录家庭账号，事项会在多台手机之间同步。' }),
     ]),
-    h('div', { className: 'scroller' }, [
-      h('div', { className: 'field' }, [h('label', { text: '用户名' }), user]),
-      h('div', { className: 'field' }, [h('label', { text: '密码' }), pass]),
+    h('div', { className: 'field' }, [h('label', { text: '用户名' }), user]),
+    h('div', { className: 'field' }, [h('label', { text: '密码' }), pass]),
+    h('div', { className: 'auth-actions' }, [
       h('button', {
-        className: 'btn',
+        className: 'btn lg block',
         text: '登录',
         onClick: async () => {
+          if (!user.value.trim()) return toast('请填写用户名');
           try {
             const session = await api.api('POST', '/api/auth/login', {
               token: '',
@@ -246,12 +306,19 @@ function renderLogin() {
         },
       }),
       h('button', {
-        className: 'btn secondary',
-        style: 'margin-top:10px;width:100%',
+        className: 'btn secondary block',
         text: '本机访客模式',
         onClick: () => {
           state.guestMode = true;
           state.screen = 'home';
+          render();
+        },
+      }),
+      h('button', {
+        className: 'btn ghost block',
+        text: '更换服务器',
+        onClick: () => {
+          state.screen = 'connect';
           render();
         },
       }),
@@ -260,18 +327,17 @@ function renderLogin() {
 }
 
 function renderMerge() {
-  return h('div', { className: 'screen' }, [
-    h('div', { className: 'top' }, [h('h1', { text: '合并本机数据' })]),
-    h('div', { className: 'scroller' }, [
-      h('div', { className: 'card' }, [
-        h('h3', { text: '把本机记录合并到当前账号？' }),
-        h('p', {
-          text: `检测到本机有 ${state.mergeCount || 0} 条未同步记录。合并后会进入当前家庭账号并在联网后同步。`,
-        }),
-      ]),
+  return h('div', { className: 'screen auth' }, [
+    h('div', { className: 'brand' }, [
+      h('div', { className: 'mark', text: '⇄' }),
+      h('h1', { text: '合并本机记录？' }),
+      h('p', {
+        text: `检测到本机有 ${state.mergeCount || 0} 条未同步记录。合并后进入当前家庭账号，联网后自动上传。`,
+      }),
+    ]),
+    h('div', { className: 'auth-actions' }, [
       h('button', {
-        className: 'btn',
-        style: 'width:100%;margin-bottom:10px',
+        className: 'btn lg block',
         text: '合并到当前账号',
         onClick: async () => {
           const n = await api.mergeGuestData();
@@ -282,8 +348,7 @@ function renderMerge() {
         },
       }),
       h('button', {
-        className: 'btn secondary',
-        style: 'width:100%;margin-bottom:10px',
+        className: 'btn secondary block',
         text: '暂不合并',
         onClick: () => {
           state.screen = 'home';
@@ -291,8 +356,7 @@ function renderMerge() {
         },
       }),
       h('button', {
-        className: 'btn danger',
-        style: 'width:100%',
+        className: 'btn danger block',
         text: '清空本机访客数据',
         onClick: async () => {
           if (!confirm('确定清空本机访客数据？此操作不可恢复。')) return;
@@ -308,19 +372,21 @@ function renderMerge() {
 
 function tabs() {
   const items = [
-    ['today', '今天'],
-    ['cal', '日历'],
-    ['plans', '计划'],
-    ['insights', '洞察'],
-    ['me', '我的'],
+    ['today', '今天', icons.today],
+    ['cal', '日历', icons.cal],
+    ['plans', '计划', icons.plans],
+    ['insights', '洞察', icons.insights],
+    ['me', '我的', icons.me],
   ];
   return h(
     'nav',
-    { className: 'tabs' },
-    items.map(([id, label]) =>
+    { className: 'tabs', role: 'tablist', 'aria-label': '主导航' },
+    items.map(([id, label, icon]) =>
       h('button', {
         className: state.tab === id ? 'active' : '',
-        text: label,
+        role: 'tab',
+        'aria-selected': state.tab === id,
+        html: `${icon}<span>${label}</span>`,
         onClick: () => {
           state.tab = id;
           render();
@@ -331,19 +397,46 @@ function tabs() {
 }
 
 function offlineBanner() {
-  if (state.online && api.getToken()) return null;
+  if (state.hideBanner) return null;
   if (!state.online) {
-    return h('div', { className: 'banner', text: '离线，变更会在联网后同步' });
+    return h('div', { className: 'banner' }, [
+      h('span', { className: 'grow', text: '当前离线，改动会在联网后同步' }),
+      h('button', {
+        className: 'x',
+        'aria-label': '关闭提示',
+        text: '×',
+        onClick: () => {
+          state.hideBanner = true;
+          sessionStorage.setItem('lt_hide_banner', '1');
+          render();
+        },
+      }),
+    ]);
   }
   if (!api.getToken()) {
-    return h('div', { className: 'banner', text: '本机访客模式：登录后可合并并同步到家庭' });
+    return h('div', { className: 'banner' }, [
+      h('span', { className: 'grow', text: '访客模式：登录后可合并并同步到家庭' }),
+      h('button', {
+        className: 'btn ghost',
+        text: '去登录',
+        onClick: () => {
+          state.screen = api.apiBase() ? 'login' : 'connect';
+          render();
+        },
+      }),
+    ]);
   }
   return null;
 }
 
-async function listActive(type) {
-  const rows = await db.entitiesByType(type);
-  return rows.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+function emptyState(title, body, cta, onClick) {
+  return h('div', { className: 'empty' }, [
+    h('h3', { text: title }),
+    h('p', { text: body }),
+    cta
+      ? h('button', { className: 'btn secondary', text: cta, onClick })
+      : null,
+  ]);
 }
 
 async function renderTodayBody() {
@@ -352,46 +445,61 @@ async function renderTodayBody() {
   const notes = await listActive('note');
   const me = api.getMember();
   const wrap = h('div');
+  const openTodos = todos.filter((t) => (t.payload.completions || {})[me?.id || 'guest'] !== 'done');
 
-  appendNodes(
-    wrap,
-    h('div', { className: 'h2', text: '今日待办' }),
-    todos.length
-      ? null
-      : h('div', { className: 'card' }, [h('p', { text: '还没有待办。点右下角新建。' })])
-  );
+  appendNodes(wrap, h('div', { className: 'section-label', text: `今日待办 · ${openTodos.length} 件未完成` }));
+
+  if (!todos.length) {
+    appendNodes(
+      wrap,
+      emptyState('今天还没有待办', '三秒记下要做的事，勾完就清爽了。', '新建待办', openCreateSheet)
+    );
+  }
 
   for (const t of todos) {
     const done = (t.payload.completions || {})[me?.id || 'guest'] === 'done';
+    const meta = [
+      t.payload.dueAt ? `截止 ${fmt(t.payload.dueAt)}` : null,
+      t.syncStatus === 'pending' ? '待同步' : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
     appendNodes(
       wrap,
-      h('div', { className: 'card row' }, [
+      h('div', { className: `todo-row ${done ? 'done' : ''}` }, [
         h('button', {
           className: `check ${done ? 'on' : ''}`,
-          text: done ? '✓' : '',
+          'aria-label': done ? '标为未完成' : '完成',
+          html: done ? '✓' : '',
           onClick: async () => {
             const completions = { ...(t.payload.completions || {}) };
             completions[me?.id || 'guest'] = done ? 'open' : 'done';
             await api.saveLocalEntity('todo', { ...t.payload, completions }, { id: t.id });
-            toast(done ? '已标为未完成' : '已完成');
+            toast(done ? '已恢复为未完成' : '已完成');
             render();
             maybeSync();
           },
         }),
         h('div', { className: 'grow' }, [
           h('h3', { text: t.payload.title }),
-          h('p', {
-            text: [t.payload.dueAt ? `截止 ${fmt(t.payload.dueAt)}` : '', t.syncStatus === 'pending' ? '待同步' : '']
-              .filter(Boolean)
-              .join(' · ') || '待办',
-          }),
+          meta ? h('p', { text: meta }) : h('p', { text: '待办' }),
         ]),
       ])
     );
   }
 
-  appendNodes(wrap, h('div', { className: 'h2', text: '今日计划' }));
-  for (const p of plans.filter((x) => !x.payload.archived)) {
+  appendNodes(wrap, h('div', { className: 'section-label', text: '今日计划' }));
+  const activePlans = plans.filter((x) => !x.payload.archived);
+  if (!activePlans.length) {
+    appendNodes(
+      wrap,
+      emptyState('还没有计划', '把每天阅读、运动做成计划，家人各自打卡。', '新建计划', () => {
+        state.form = { type: 'plan', title: '', body: '', visibility: 'self', attachments: [] };
+        render();
+      })
+    );
+  }
+  for (const p of activePlans) {
     const execs = p.payload.executorIds || [];
     const mine = !me || execs.includes(me.id) || execs.length === 0;
     if (me?.role === 'child' && !execs.includes(me.id)) continue;
@@ -399,11 +507,11 @@ async function renderTodayBody() {
       wrap,
       h('div', { className: 'card' }, [
         h('h3', { text: p.payload.title }),
-        h('p', { text: `${(execs.length || 1)} 人执行 · ${p.payload.reminder || '无提醒'}` }),
+        h('p', { text: `${execs.length || 1} 人执行 · 提醒 ${p.payload.reminder || '未设置'}` }),
         mine
           ? h('button', {
               className: 'btn secondary',
-              style: 'margin-top:10px',
+              style: 'margin-top:12px',
               text: '打卡',
               onClick: async () => {
                 const feedback = prompt('一句反馈（可空）') || '';
@@ -414,7 +522,7 @@ async function renderTodayBody() {
                   status: 'done',
                   feedback,
                 });
-                toast('已打卡');
+                toast('打卡成功');
                 render();
                 maybeSync();
               },
@@ -424,46 +532,44 @@ async function renderTodayBody() {
     );
   }
 
-  appendNodes(wrap, h('div', { className: 'h2', text: '便签' }));
-  for (const n of notes.slice(0, 5)) {
+  appendNodes(wrap, h('div', { className: 'section-label', text: '最近便签' }));
+  if (!notes.length) {
+    appendNodes(wrap, h('p', { className: 'muted', text: '没有便签。点右下角可随手记。' }));
+  }
+  for (const n of notes.slice(0, 4)) {
     appendNodes(
       wrap,
-      h('div', { className: 'card' }, [
+      h('div', { className: 'card pressable' }, [
         h('h3', { text: n.payload.title }),
-        h('p', { text: n.payload.body || visibilityLabel(n.payload.visibility) }),
+        h('p', { text: n.payload.body || visibilityLabel(n.payload.visibility) || '便签' }),
       ])
     );
   }
   return wrap;
 }
 
-function visibilityLabel(v) {
-  return { self: '仅自己', members: '指定成员', family: '全家' }[v] || '';
-}
-
-function dayKey(d) {
-  return d.toISOString().slice(0, 10);
-}
-
-function fmt(iso) {
-  try {
-    return new Date(iso).toLocaleString('zh-CN', { hour12: false });
-  } catch {
-    return iso;
-  }
-}
-
 async function renderCalBody() {
   const events = await listActive('event');
   const todos = (await listActive('todo')).filter((t) => t.payload.dueAt);
-  const wrap = h('div', {}, [h('div', { className: 'h2', text: '本周安排' })]);
+  const wrap = h('div');
   const items = [
     ...events.map((e) => ({ title: e.payload.title, when: e.payload.startAt, kind: '日程' })),
     ...todos.map((t) => ({ title: t.payload.title, when: t.payload.dueAt, kind: '待办' })),
   ].sort((a, b) => String(a.when).localeCompare(String(b.when)));
-  if (!items.length) wrap.append(h('div', { className: 'card' }, [h('p', { text: '日历还是空的。' })]));
+
+  appendNodes(wrap, h('div', { className: 'section-label', text: '即将到来' }));
+  if (!items.length) {
+    appendNodes(
+      wrap,
+      emptyState('日历还是空的', '给待办加截止时间，或新建日程，就会出现在这里。', '新建日程', () => {
+        state.form = { type: 'event', title: '', body: '', visibility: 'self', attachments: [] };
+        render();
+      })
+    );
+  }
   for (const it of items) {
-    wrap.append(
+    appendNodes(
+      wrap,
       h('div', { className: 'card' }, [
         h('h3', { text: it.title }),
         h('p', { text: `${it.kind} · ${fmt(it.when)}` }),
@@ -476,12 +582,24 @@ async function renderCalBody() {
 async function renderPlansBody() {
   const plans = await listActive('plan');
   const wrap = h('div');
-  if (!plans.length) wrap.append(h('div', { className: 'card' }, [h('p', { text: '还没有计划。' })]));
+  appendNodes(wrap, h('div', { className: 'section-label', text: '全部计划' }));
+  if (!plans.length) {
+    appendNodes(
+      wrap,
+      emptyState('还没有计划', '适合重复发生的家庭事项，每人单独打卡。', '新建计划', () => {
+        state.form = { type: 'plan', title: '', body: '', visibility: 'self', attachments: [] };
+        render();
+      })
+    );
+  }
   for (const p of plans) {
-    wrap.append(
+    appendNodes(
+      wrap,
       h('div', { className: 'card' }, [
         h('h3', { text: p.payload.title }),
-        h('p', { text: p.payload.notes || `${p.payload.cycle || '每天'} · 执行人 ${(p.payload.executorIds || []).length} 人` }),
+        h('p', {
+          text: p.payload.notes || `${p.payload.cycle || '每天'} · ${(p.payload.executorIds || []).length || 1} 人`,
+        }),
       ])
     );
   }
@@ -499,32 +617,56 @@ async function renderInsightsBody() {
   const rate = recent.length ? Math.round((done / Math.max(recent.length, 1)) * 100) : 0;
   const openTodos = todos.filter((t) => (t.payload.completions || {})[me?.id || 'guest'] !== 'done');
   const wrap = h('div');
-  wrap.append(
+
+  appendNodes(
+    wrap,
     h('div', { className: 'card' }, [
-      h('p', { className: 'muted', text: '近 7 日完成率（本机数据）' }),
+      h('p', { className: 'eyebrow', text: '近 7 日 · 本机数据' }),
       h('div', { className: 'stat', text: `${rate}%` }),
       h('div', { className: 'bar' }, [h('i', { style: `width:${rate}%` })]),
-      h('p', { style: 'margin-top:8px', className: 'muted', text: recent.length ? `${done}/${recent.length} 次打卡` : '暂无打卡，完成几次计划后再来看。' }),
+      h('p', {
+        style: 'margin-top:10px',
+        className: 'muted',
+        text: recent.length ? `${done} / ${recent.length} 次打卡完成` : '暂无打卡。完成几次计划后再来看节奏。',
+      }),
     ])
   );
+
   if (openTodos.length) {
-    wrap.append(
+    appendNodes(
+      wrap,
       h('div', { className: 'card' }, [
         h('h3', { text: '待办建议' }),
-        h('p', { text: `还有 ${openTodos.length} 件未完成，优先处理「${openTodos[0].payload.title}」。` }),
+        h('p', { text: `还有 ${openTodos.length} 件未完成，建议先处理「${openTodos[0].payload.title}」。` }),
+        h('button', {
+          className: 'btn secondary',
+          style: 'margin-top:12px',
+          text: '回到今天',
+          onClick: () => {
+            state.tab = 'today';
+            render();
+          },
+        }),
       ])
     );
   }
   if (plans.length && rate < 60 && recent.length) {
-    wrap.append(
+    appendNodes(
+      wrap,
       h('div', { className: 'card' }, [
-        h('h3', { text: '风险提示' }),
-        h('p', { text: '近一周打卡完成率偏低，今晚提醒前先留出 15 分钟。' }),
+        h('h3', { text: '节奏提醒' }),
+        h('p', { text: '近一周完成率偏低，今晚提醒前先留出 15 分钟。' }),
       ])
     );
   }
   if (!recent.length && !openTodos.length) {
-    wrap.append(h('div', { className: 'card' }, [h('p', { text: '数据还很少。先创建计划并打卡，洞察会在本机生成，不会上传第三方。' })]));
+    appendNodes(
+      wrap,
+      emptyState('洞察还在等数据', '先创建计划并打卡，分析只在本机完成，不会上传第三方。', '去今天', () => {
+        state.tab = 'today';
+        render();
+      })
+    );
   }
   return wrap;
 }
@@ -552,16 +694,18 @@ async function renderMeBody() {
     }
   });
 
-  const avatar = h('button', {
-    className: 'avatar',
-    onClick: () => {
-      if (!me) return toast('登录后可设置头像');
-      fileInput.click();
+  const avatar = h(
+    'button',
+    {
+      className: 'avatar',
+      'aria-label': '更换头像',
+      onClick: () => {
+        if (!me) return toast('登录后可设置头像');
+        fileInput.click();
+      },
     },
-  }, [
-    me?.displayName?.[0] || '访',
-    h('span', { className: 'cam', text: '📷' }),
-  ]);
+    [me?.displayName?.[0] || '访', h('span', { className: 'cam', text: '✎' })]
+  );
 
   const wrap = h('div', {}, [
     fileInput,
@@ -569,40 +713,44 @@ async function renderMeBody() {
       avatar,
       h('div', { className: 'grow' }, [
         h('h3', { text: me?.displayName || '本机访客' }),
-        h('p', { text: me ? `${roleLabel(me.role)} · ${me.username}` : '未登录' }),
-        h('p', { text: family ? `家庭：${family.name}` : api.apiBase() || '未连接服务器' }),
+        h('p', { text: me ? `${roleLabel(me.role)} · @${me.username}` : '未登录 · 数据仅本机' }),
+        h('p', { text: family ? family.name : api.apiBase() || '未连接服务器' }),
       ]),
     ]),
     h('div', { className: 'card' }, [
-      h('h3', { text: '同步' }),
-      h('p', {
-        text: lastSync
-          ? `最近同步 ${fmt(lastSync)} · 队列 ${queue.length}`
-          : `尚未同步 · 队列 ${queue.length}`,
-      }),
-      h('button', {
-        className: 'btn secondary',
-        style: 'margin-top:10px',
-        text: '立即同步',
-        onClick: async () => {
-          try {
-            const r = await api.syncNow();
-            toast(r.skipped ? '请先登录' : `已同步，拉取 ${r.pullCount} 条`);
-            render();
-          } catch (e) {
-            toast(e.message);
-          }
-        },
-      }),
+      h('div', { className: 'row' }, [
+        h('div', { className: 'grow' }, [
+          h('h3', { text: '同步' }),
+          h('p', {
+            text: lastSync
+              ? `最近 ${fmt(lastSync)} · 队列 ${queue.length}`
+              : `尚未同步 · 队列 ${queue.length}`,
+          }),
+        ]),
+        h('button', {
+          className: 'icon-btn',
+          'aria-label': '立即同步',
+          html: icons.sync,
+          onClick: async () => {
+            try {
+              const r = await api.syncNow();
+              toast(r.skipped ? '请先登录再同步' : `已同步，拉取 ${r.pullCount} 条`);
+              render();
+            } catch (e) {
+              toast(e.message);
+            }
+          },
+        }),
+      ]),
     ]),
-    h('div', { className: 'h2', text: '皮肤' }),
-    h('div', { className: 'seg' }, [
+    h('div', { className: 'section-label', text: '外观' }),
+    h('div', { className: 'seg', style: 'margin-bottom:12px' }, [
       ['night', '夜航'],
-      ['day', '日间清晰'],
+      ['day', '日间'],
       ['paper', '暖纸'],
     ].map(([id, label]) =>
       h('button', {
-        className: `btn secondary ${state.theme === id ? '' : ''}`,
+        className: state.theme === id ? 'on' : '',
         text: label,
         onClick: () => {
           state.theme = id;
@@ -612,11 +760,10 @@ async function renderMeBody() {
         },
       })
     )),
-    h('div', { className: 'h2', text: '字号' }),
     h('div', { className: 'seg' }, [
       h('button', {
-        className: 'btn secondary',
-        text: '标准',
+        className: state.font === 'standard' ? 'on' : '',
+        text: '标准字号',
         onClick: () => {
           state.font = 'standard';
           localStorage.setItem('lt_font', 'standard');
@@ -625,8 +772,8 @@ async function renderMeBody() {
         },
       }),
       h('button', {
-        className: 'btn secondary',
-        text: '大',
+        className: state.font === 'large' ? 'on' : '',
+        text: '大字号',
         onClick: () => {
           state.font = 'large';
           localStorage.setItem('lt_font', 'large');
@@ -638,35 +785,35 @@ async function renderMeBody() {
   ]);
 
   if (me?.role === 'admin') {
-    wrap.append(
-      h('div', { className: 'h2', text: '成员' }),
-      h('div', { className: 'card' }, [
+    appendNodes(
+      wrap,
+      h('div', { className: 'section-label', text: '家庭成员' }),
+      h('div', { className: 'card stack' }, [
         ...state.members.map((m) =>
-          h('div', { className: 'row', style: 'margin-bottom:8px' }, [
+          h('div', { className: 'row' }, [
             h('div', { className: 'grow' }, [
               h('h3', { text: m.displayName }),
-              h('p', { text: `${m.username} · ${roleLabel(m.role)}` }),
+              h('p', { text: `@${m.username} · ${roleLabel(m.role)}` }),
             ]),
           ])
         ),
         h('button', {
-          className: 'btn secondary',
+          className: 'btn secondary block',
           text: '添加成员',
           onClick: async () => {
             const displayName = prompt('显示名');
             const username = prompt('用户名（小写字母数字）');
             const password = prompt('初始密码');
-            const role = prompt('角色 parent/adult/child', 'child');
+            const role = prompt('角色 parent / adult / child', 'child');
             if (!displayName || !username || !password) return;
             try {
               await api.api('POST', '/api/members', {
                 body: { displayName, username, password, role },
               });
-              await maybeSync();
               const meRes = await api.api('GET', '/api/me');
               state.members = meRes.members;
               await db.kvSet('members', meRes.members);
-              toast('已添加');
+              toast('成员已添加');
               render();
             } catch (e) {
               toast(e.message);
@@ -677,12 +824,12 @@ async function renderMeBody() {
     );
   }
 
-  wrap.append(
-    h('div', { style: 'height:12px' }),
+  appendNodes(
+    wrap,
+    h('div', { style: 'height:16px' }),
     api.getToken()
       ? h('button', {
-          className: 'btn secondary',
-          style: 'width:100%',
+          className: 'btn secondary block',
           text: '退出登录',
           onClick: async () => {
             try {
@@ -696,8 +843,7 @@ async function renderMeBody() {
           },
         })
       : h('button', {
-          className: 'btn',
-          style: 'width:100%',
+          className: 'btn lg block',
           text: '登录家庭账号',
           onClick: () => {
             state.screen = api.apiBase() ? 'login' : 'connect';
@@ -705,11 +851,10 @@ async function renderMeBody() {
           },
         }),
     h('button', {
-      className: 'btn ghost',
-      style: 'width:100%;margin-top:8px',
+      className: 'btn ghost block',
       text: '更换服务器',
       onClick: () => {
-        if (confirm('更换后需要重新登录')) {
+        if (confirm('更换后需要重新登录，本机皮肤设置会保留。')) {
           api.setSession(null);
           state.screen = 'connect';
           render();
@@ -728,11 +873,19 @@ function openCreateSheet() {
 function renderCreateModal() {
   if (!state.form) return null;
   const f = state.form;
-  const title = h('input', { value: f.title, placeholder: '标题' });
+  const title = h('input', {
+    value: f.title,
+    placeholder: f.type === 'note' ? '便签标题' : '写清楚要做什么',
+    autofocus: true,
+  });
   title.addEventListener('input', () => (f.title = title.value));
-  const body = h('textarea', { rows: '3', placeholder: '补充说明（可空）' });
+  const body = h('textarea', {
+    rows: '3',
+    placeholder: f.type === 'note' ? '正文（可空）' : '补充说明（可空）',
+  });
   body.value = f.body || '';
   body.addEventListener('input', () => (f.body = body.value));
+
   const file = h('input', { type: 'file', className: 'hidden', multiple: true });
   const attachRow = h('div', { className: 'attach' });
   const refreshAttach = () => {
@@ -748,12 +901,13 @@ function renderCreateModal() {
     attachRow.append(
       h('button', {
         className: 'thumb',
-        text: '+',
+        type: 'button',
+        text: '+ 附件',
         onClick: () => file.click(),
       })
     );
   };
-  file.addEventListener('change', async () => {
+  file.addEventListener('change', () => {
     for (const fl of [...file.files]) {
       const err = api.validateAttachment(fl);
       if (err) {
@@ -771,32 +925,45 @@ function renderCreateModal() {
   });
   refreshAttach();
 
-  const typeSeg = h('div', { className: 'seg' }, [
-    ['todo', '待办'],
-    ['note', '便签'],
-    ['event', '日程'],
-    ['plan', '计划'],
-  ].map(([id, label]) =>
-    h('button', {
-      className: `chip ${f.type === id ? 'on' : ''}`,
-      text: label,
-      onClick: () => {
-        f.type = id;
-        render();
-      },
-    })
-  ));
+  const typeSeg = h(
+    'div',
+    { className: 'seg', style: 'margin-bottom:14px' },
+    [
+      ['todo', '待办'],
+      ['note', '便签'],
+      ['event', '日程'],
+      ['plan', '计划'],
+    ].map(([id, label]) =>
+      h('button', {
+        className: f.type === id ? 'on' : '',
+        text: label,
+        onClick: () => {
+          f.type = id;
+          render();
+        },
+      })
+    )
+  );
 
-  return h('div', { className: 'modal' }, [
-    h('div', { className: 'sheet' }, [
-      h('h2', { style: 'margin:0 0 12px', text: '新建' }),
+  return h('div', {
+    className: 'modal',
+    onClick: (e) => {
+      if (e.target.classList.contains('modal')) {
+        state.form = null;
+        render();
+      }
+    },
+  }, [
+    h('div', { className: 'sheet', role: 'dialog', 'aria-label': '新建' }, [
+      h('div', { className: 'handle' }),
+      h('h2', { text: '快速新建' }),
       typeSeg,
-      h('div', { className: 'field', style: 'margin-top:12px' }, [title]),
-      h('div', { className: 'field' }, [body]),
+      h('div', { className: 'field' }, [h('label', { text: '标题' }), title]),
+      h('div', { className: 'field' }, [h('label', { text: '说明' }), body]),
       f.type === 'note'
-        ? h('div', { className: 'seg', style: 'margin-bottom:12px' }, [
+        ? h('div', { className: 'chip-row' }, [
             ['self', '仅自己'],
-            ['family', '全家'],
+            ['family', '全家可见'],
           ].map(([id, label]) =>
             h('button', {
               className: `chip ${f.visibility === id ? 'on' : ''}`,
@@ -808,10 +975,10 @@ function renderCreateModal() {
             })
           ))
         : null,
-      h('div', { className: 'h2', text: '照片或附件（≤20MB）' }),
+      h('p', { className: 'eyebrow', text: '照片或附件 · 单文件 ≤ 20MB' }),
       file,
       attachRow,
-      h('div', { className: 'row', style: 'margin-top:16px' }, [
+      h('div', { className: 'row', style: 'margin-top:16px;gap:10px' }, [
         h('button', {
           className: 'btn secondary grow',
           text: '取消',
@@ -822,9 +989,9 @@ function renderCreateModal() {
         }),
         h('button', {
           className: 'btn grow',
-          text: '保存',
+          text: '保存到本机',
           onClick: async () => {
-            if (!f.title.trim()) return toast('请填写标题');
+            if (!f.title.trim()) return toast('请先填写标题');
             const attachmentIds = [];
             for (const a of f.attachments) {
               try {
@@ -836,11 +1003,12 @@ function renderCreateModal() {
               }
             }
             const base = { title: f.title.trim(), attachmentIds };
+            const me = api.getMember();
             if (f.type === 'todo') {
               await api.saveLocalEntity('todo', {
                 ...base,
                 notes: f.body,
-                assigneeIds: api.getMember() ? [api.getMember().id] : ['guest'],
+                assigneeIds: me ? [me.id] : ['guest'],
                 completions: {},
               });
             } else if (f.type === 'note') {
@@ -859,7 +1027,7 @@ function renderCreateModal() {
                 startAt: start.toISOString(),
                 endAt: end.toISOString(),
                 allDay: false,
-                participantIds: api.getMember() ? [api.getMember().id] : ['guest'],
+                participantIds: me ? [me.id] : ['guest'],
               });
             } else if (f.type === 'plan') {
               await api.saveLocalEntity('plan', {
@@ -867,11 +1035,14 @@ function renderCreateModal() {
                 notes: f.body,
                 cycle: 'daily',
                 reminder: '20:00',
-                executorIds: api.getMember() ? [api.getMember().id] : ['guest'],
+                executorIds: me ? [me.id] : ['guest'],
               });
             }
             state.form = null;
-            toast('已保存到本机');
+            if (f.type === 'event') state.tab = 'cal';
+            else if (f.type === 'plan') state.tab = 'plans';
+            else state.tab = 'today';
+            toast('已保存');
             render();
             maybeSync();
           },
@@ -882,11 +1053,11 @@ function renderCreateModal() {
 }
 
 async function renderHome() {
-  const titleMap = {
-    today: '今天',
+  const titles = {
+    today: null,
     cal: '日历',
     plans: '计划',
-    insights: 'AI 洞察',
+    insights: '洞察',
     me: '我的',
   };
   const bodyMap = {
@@ -897,23 +1068,52 @@ async function renderHome() {
     me: renderMeBody,
   };
   const body = await bodyMap[state.tab]();
-  const screen = h('div', { className: 'screen' }, [
-    h('div', { className: 'top' }, [h('h1', { text: titleMap[state.tab] })]),
+  const me = api.getMember();
+  const top =
+    state.tab === 'today'
+      ? h('div', { className: 'top' }, [
+          h('div', { className: 'greeting' }, [
+            h('p', { className: 'eyebrow', text: fmtDateNice() }),
+            h('h1', { text: `${hello()}${me ? '，' + me.displayName : ''}` }),
+          ]),
+          h('button', {
+            className: 'icon-btn',
+            'aria-label': '同步',
+            html: icons.sync,
+            onClick: async () => {
+              try {
+                const r = await api.syncNow();
+                toast(r.skipped ? '登录后可同步到家庭' : `已同步 ${r.pullCount} 条`);
+                render();
+              } catch (e) {
+                toast(e.message);
+              }
+            },
+          }),
+        ])
+      : h('div', { className: 'top' }, [h('h1', { text: titles[state.tab] })]);
+
+  return h('div', { className: 'screen' }, [
+    top,
     offlineBanner(),
     h('div', { className: 'scroller' }, [body]),
     state.tab !== 'me' && state.tab !== 'insights'
-      ? h('button', { className: 'fab', text: '+', onClick: openCreateSheet })
+      ? h('button', {
+          className: 'fab',
+          'aria-label': '新建',
+          html: icons.plus,
+          onClick: openCreateSheet,
+        })
       : null,
     tabs(),
     renderCreateModal(),
   ]);
-  return screen;
 }
 
 async function render() {
   applyChrome();
   root.innerHTML = '';
-  root.append(h('div', { id: 'toast', className: 'toast' }));
+  root.append(h('div', { id: 'toast', className: 'toast', role: 'status' }));
   let view;
   if (state.screen === 'connect') view = renderConnect();
   else if (state.screen === 'setup') view = renderSetup();
@@ -921,6 +1121,9 @@ async function render() {
   else if (state.screen === 'merge') view = renderMerge();
   else view = await renderHome();
   root.append(view);
+  // autofocus title in sheet
+  const focusEl = root.querySelector('.sheet input');
+  if (focusEl) setTimeout(() => focusEl.focus(), 50);
 }
 
 boot();
