@@ -555,4 +555,113 @@ button { cursor: pointer; }
 }
 .cal-pull-hint { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.02em; }
 .cal-day-list { padding-top: 4px; }
+
+/* Create menu + typed forms */
+.menu-list { display: grid; gap: 8px; margin-top: 4px; }
+.menu-item {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; text-align: left;
+  border: 1px solid var(--line);
+  background: var(--field);
+  border-radius: var(--radius-md);
+  padding: 12px 14px; min-height: 64px;
+  color: var(--text);
+  transition: background .15s var(--ease), transform .15s var(--ease);
+}
+.menu-item:active { transform: scale(0.985); }
+.menu-item .mi {
+  width: 40px; height: 40px; border-radius: 14px; flex: none;
+  display: grid; place-items: center;
+  background: color-mix(in oklch, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.menu-item .mi svg { width: 22px; height: 22px; }
+.menu-item strong { display: block; font-family: var(--font-display); font-size: 1rem; }
+.menu-item span span { display: block; color: var(--muted); font-size: 0.78rem; margin-top: 2px; }
+.menu-item .chev { margin-left: auto; color: var(--muted); }
+
+.form-screen {
+  position: absolute; inset: 0; z-index: 45;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+  animation: rise .28s var(--ease);
+}
+.form-screen .top { border-bottom: 1px solid var(--line); }
+.form-screen .scroller { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+.form-screen h2.block-title {
+  margin: 18px 2px 10px;
+  font-size: 0.8rem; font-weight: 650;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted);
+}
+.choice {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 44px; margin: 0 0 12px; padding: 0 2px;
+  color: var(--text); font-weight: 550;
+}
+.choice input { width: 18px; height: 18px; accent-color: var(--accent); }
+.err { margin: -4px 0 10px; color: var(--miss); font-size: 0.78rem; }
+
+.vis-grid { display: grid; gap: 8px; }
+.vis-card {
+  display: flex; align-items: flex-start; gap: 12px;
+  width: 100%; text-align: left;
+  border: 1px solid var(--line);
+  background: var(--field);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  color: var(--text);
+}
+.vis-card[aria-pressed="true"] {
+  border-color: color-mix(in oklch, var(--accent) 55%, var(--line));
+  background: color-mix(in oklch, var(--accent) 12%, var(--field));
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--accent) 25%, transparent);
+}
+.vis-card strong { display: block; font-family: var(--font-display); margin-bottom: 2px; }
+.vis-card span span { display: block; color: var(--muted); font-size: 0.78rem; line-height: 1.35; }
+.vis-card .vis-check {
+  margin-left: auto; width: 22px; height: 22px; border-radius: 999px;
+  border: 1.5px solid var(--line); flex: none;
+  display: grid; place-items: center; font-size: 12px; color: transparent;
+}
+.vis-card[aria-pressed="true"] .vis-check {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+}
+
+.check-list { display: grid; gap: 8px; margin-bottom: 12px; }
+.check-row {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 48px; padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--field);
+  color: var(--text); width: 100%; text-align: left;
+}
+.check-row[aria-pressed="true"] {
+  border-color: color-mix(in oklch, var(--accent) 50%, var(--line));
+  background: color-mix(in oklch, var(--accent) 10%, var(--field));
+}
+.check-row .box {
+  width: 22px; height: 22px; border-radius: 7px; flex: none;
+  border: 1.5px solid var(--line);
+  display: grid; place-items: center; font-size: 12px; color: transparent;
+}
+.check-row[aria-pressed="true"] .box {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+}
+
+.days {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px;
+  margin-bottom: 12px;
+}
+.days button {
+  border: 1px solid var(--line);
+  background: var(--field);
+  color: var(--muted);
+  border-radius: 12px;
+  min-height: 40px;
+  font-weight: 650; font-size: 0.8rem;
+}
+.days button[aria-pressed="true"] {
+  background: var(--accent); color: var(--on-accent); border-color: transparent;
+}
 `;

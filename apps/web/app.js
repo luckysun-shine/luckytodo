@@ -83,6 +83,8 @@ function h(tag, attrs = {}, children = []) {
     else if (k === 'text') el.textContent = v;
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
     else if (k === 'html') el.innerHTML = v;
+    else if (k === 'checked' || k === 'selected' || k === 'disabled') el[k] = !!v;
+    else if (k === 'value' && (tag === 'input' || tag === 'textarea' || tag === 'select')) el.value = v == null ? '' : v;
     else if (v !== false && v != null) el.setAttribute(k, v === true ? '' : v);
   }
   for (const c of [].concat(children)) {
@@ -544,7 +546,7 @@ async function renderTodayBody() {
   if (!todos.length) {
     appendNodes(
       wrap,
-      emptyState('今天还没有待办', '三秒记下要做的事，勾完就清爽了。', '新建待办', openCreateSheet)
+      emptyState('今天还没有待办', '三秒记下要做的事，勾完就清爽了。', '新建待办', () => openCreateForm('todo'))
     );
   }
 
@@ -585,10 +587,7 @@ async function renderTodayBody() {
   if (!activePlans.length) {
     appendNodes(
       wrap,
-      emptyState('还没有计划', '把每天阅读、运动做成计划，家人各自打卡。', '新建计划', () => {
-        state.form = { type: 'plan', title: '', body: '', visibility: 'self', attachments: [] };
-        render();
-      })
+      emptyState('还没有计划', '把每天阅读、运动做成计划，家人各自打卡。', '新建计划', () => openCreateForm('plan'))
     );
   }
   for (const p of activePlans) {
@@ -751,10 +750,7 @@ async function renderCalBody() {
   if (!dayItems.length) {
     appendNodes(
       list,
-      emptyState('这天还没有安排', '点右下角新建日程，或给待办加上截止日。', '新建日程', () => {
-        state.form = { type: 'event', title: '', body: '', visibility: 'self', attachments: [] };
-        render();
-      })
+      emptyState('这天还没有安排', '点右下角新建日程，或给待办加上截止日。', '新建日程', () => openCreateForm('event'))
     );
   } else {
     for (const it of dayItems) {
@@ -812,10 +808,7 @@ async function renderPlansBody() {
   if (!plans.length) {
     appendNodes(
       wrap,
-      emptyState('还没有计划', '适合重复发生的家庭事项，每人单独打卡。', '新建计划', () => {
-        state.form = { type: 'plan', title: '', body: '', visibility: 'self', attachments: [] };
-        render();
-      })
+      emptyState('还没有计划', '适合重复发生的家庭事项，每人单独打卡。', '新建计划', () => openCreateForm('plan'))
     );
   }
   for (const p of plans) {
@@ -1091,40 +1084,131 @@ async function renderMeBody() {
   return wrap;
 }
 
+function myId() {
+  return api.getMember()?.id || 'guest';
+}
+
+function assignableMembers() {
+  const me = api.getMember();
+  let list = (state.members || []).filter((m) => !m.disabled);
+  if (!list.length && me) list = [me];
+  if (me?.role === 'adult') {
+    // adults can assign other adults/self, not children as supervisors — keep children assignable as executors for todos/plans they create? PRD: adult can set other adult or self. For plans, adults creating plans...
+    list = list.filter((m) => m.role !== 'child' || m.id === me.id);
+  }
+  return list;
+}
+
+function toLocalInput(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function defaultDraft(type) {
+  const id = myId();
+  const today = dayKey(new Date());
+  const now = new Date();
+  now.setMinutes(0, 0, 0);
+  now.setHours(now.getHours() + 1);
+  const end = new Date(now.getTime() + 3600e3);
+  const calDay = state.tab === 'cal' && state.calSelected ? state.calSelected : today;
+  if (type === 'note') {
+    return { title: '', body: '', visibility: 'self', memberIds: [], pinned: false, attachments: [] };
+  }
+  if (type === 'todo') {
+    return {
+      title: '',
+      notes: '',
+      due: '',
+      reminderKind: 'none',
+      customReminder: '',
+      assigneeIds: [id],
+      attachments: [],
+    };
+  }
+  if (type === 'event') {
+    return {
+      title: '',
+      allday: false,
+      date: calDay,
+      start: `${calDay}T${String(now.getHours()).padStart(2, '0')}:00`,
+      end: toLocalInput(end).replace(/^\d{4}-\d{2}-\d{2}/, calDay),
+      reminderKind: 'none',
+      participantIds: [id],
+      attachments: [],
+    };
+  }
+  return {
+    title: '',
+    desc: '',
+    cycleType: 'daily',
+    weekdays: [1, 2, 3, 4, 5],
+    monthDay: 1,
+    interval: 2,
+    start: today,
+    end: '',
+    remind: true,
+    remindTime: '20:00',
+    assigneeIds: [id],
+    attachments: [],
+  };
+}
+
 function openCreateSheet() {
-  state.form = { type: 'todo', title: '', body: '', visibility: 'self', attachments: [] };
+  state.form = { mode: 'menu' };
   render();
 }
 
-function renderCreateModal() {
-  if (!state.form) return null;
-  const f = state.form;
-  const title = h('input', {
-    value: f.title,
-    placeholder: f.type === 'note' ? '便签标题' : '写清楚要做什么',
-    autofocus: true,
-  });
-  title.addEventListener('input', () => (f.title = title.value));
-  const body = h('textarea', {
-    rows: '3',
-    placeholder: f.type === 'note' ? '正文（可空）' : '补充说明（可空）',
-  });
-  body.value = f.body || '';
-  body.addEventListener('input', () => (f.body = body.value));
+function openCreateForm(type) {
+  const me = api.getMember();
+  if (me?.role === 'child' && (type === 'event' || type === 'plan')) {
+    toast('儿童账号不能新建日程或计划');
+    return;
+  }
+  state.form = { mode: 'edit', type, draft: defaultDraft(type), errors: {} };
+  render();
+}
 
+function closeForm() {
+  state.form = null;
+  render();
+}
+
+function draftPatch(patch) {
+  if (!state.form || state.form.mode !== 'edit') return;
+  Object.assign(state.form.draft, patch);
+  render();
+}
+
+function toggleId(list, id) {
+  const set = new Set(list || []);
+  if (set.has(id)) set.delete(id);
+  else set.add(id);
+  return [...set];
+}
+
+function fieldEl(label, control, err) {
+  return h('div', { className: 'field' }, [
+    h('label', { text: label }),
+    control,
+    err ? h('p', { className: 'err', text: err }) : null,
+  ]);
+}
+
+function attachBlock(draft, entityType) {
   const file = h('input', { type: 'file', className: 'hidden', multiple: true });
-  const attachRow = h('div', { className: 'attach' });
-  const refreshAttach = () => {
-    attachRow.innerHTML = '';
-    for (const a of f.attachments) {
+  const row = h('div', { className: 'attach' });
+  const refresh = () => {
+    row.innerHTML = '';
+    for (const a of draft.attachments) {
       const thumb = h('div', { className: 'thumb', text: a.fileName.slice(0, 6) });
       if (a.preview) {
         thumb.textContent = '';
         thumb.append(h('img', { src: a.preview, alt: '' }));
       }
-      attachRow.append(thumb);
+      row.append(thumb);
     }
-    attachRow.append(
+    row.append(
       h('button', {
         className: 'thumb',
         type: 'button',
@@ -1140,149 +1224,668 @@ function renderCreateModal() {
         toast(err);
         continue;
       }
-      if (f.attachments.length >= 9) {
+      if (draft.attachments.length >= 9) {
         toast('单条最多 9 个附件');
         break;
       }
-      const preview = fl.type.startsWith('image/') ? URL.createObjectURL(fl) : null;
-      f.attachments.push({ file: fl, fileName: fl.name, preview });
+      draft.attachments.push({
+        file: fl,
+        fileName: fl.name,
+        preview: fl.type.startsWith('image/') ? URL.createObjectURL(fl) : null,
+      });
     }
-    refreshAttach();
+    refresh();
   });
-  refreshAttach();
+  refresh();
+  return h('div', {}, [
+    h('p', { className: 'eyebrow', text: '照片或附件 · 单文件 ≤ 20MB' }),
+    file,
+    row,
+  ]);
+}
 
-  const typeSeg = h(
-    'div',
-    { className: 'seg', style: 'margin-bottom:14px' },
-    [
-      ['todo', '待办'],
-      ['note', '便签'],
-      ['event', '日程'],
-      ['plan', '计划'],
-    ].map(([id, label]) =>
-      h('button', {
-        className: f.type === id ? 'on' : '',
-        text: label,
-        onClick: () => {
-          f.type = id;
-          render();
-        },
-      })
-    )
-  );
+function peoplePicker(label, selectedIds, onChange, err) {
+  const me = api.getMember();
+  if (me?.role === 'child') {
+    return h('div', {}, [
+      h('h2', { className: 'block-title', text: label }),
+      h('p', { className: 'muted', text: '执行人是你自己。' }),
+    ]);
+  }
+  const list = assignableMembers();
+  return h('div', {}, [
+    h('h2', { className: 'block-title', text: label }),
+    h(
+      'div',
+      { className: 'check-list' },
+      list.map((m) =>
+        h('button', {
+          type: 'button',
+          className: 'check-row',
+          'aria-pressed': selectedIds.includes(m.id),
+          onClick: () => onChange(toggleId(selectedIds, m.id)),
+        }, [
+          h('span', { className: 'box', text: selectedIds.includes(m.id) ? '✓' : '' }),
+          h('span', { className: 'grow' }, [
+            h('strong', { text: m.displayName }),
+            h('span', { className: 'muted', text: roleLabel(m.role) }),
+          ]),
+        ])
+      )
+    ),
+    err ? h('p', { className: 'err', text: err }) : null,
+  ]);
+}
 
+async function uploadDraftAttachments(draft, type) {
+  const ids = [];
+  for (const a of draft.attachments || []) {
+    const media = await api.uploadMedia(a.file, { purpose: 'attachment', parentType: type });
+    ids.push(media.id);
+  }
+  return ids;
+}
+
+function computeTodoRemindAt(draft) {
+  if (draft.reminderKind === 'none' || !draft.reminderKind) return null;
+  if (draft.reminderKind === 'custom') {
+    return draft.customReminder ? new Date(draft.customReminder).toISOString() : null;
+  }
+  if (!draft.due) return null;
+  const due = new Date(draft.due);
+  if (draft.reminderKind === 'due') return due.toISOString();
+  if (draft.reminderKind === 'before1h') return new Date(due.getTime() - 3600e3).toISOString();
+  return null;
+}
+
+function computeEventRemindAt(draft, startIso) {
+  if (draft.reminderKind === 'none' || !draft.reminderKind) return null;
+  const start = new Date(startIso);
+  if (draft.allday) {
+    if (draft.reminderKind === 'day9') {
+      const d = new Date(draft.date + 'T09:00:00');
+      return d.toISOString();
+    }
+    if (draft.reminderKind === 'prev9') {
+      const d = new Date(draft.date + 'T09:00:00');
+      d.setDate(d.getDate() - 1);
+      return d.toISOString();
+    }
+  } else {
+    if (draft.reminderKind === 'start') return start.toISOString();
+    if (draft.reminderKind === 'm10') return new Date(start.getTime() - 600e3).toISOString();
+    if (draft.reminderKind === 'h1') return new Date(start.getTime() - 3600e3).toISOString();
+  }
+  return null;
+}
+
+function renderCreateMenu() {
+  const me = api.getMember();
+  const isChild = me?.role === 'child';
+  const items = isChild
+    ? [
+        ['note', '便签', '短记录，稍后再转待办', icons.today],
+        ['todo', '待办', '要勾完的一件事', icons.plans],
+      ]
+    : [
+        ['note', '便签', '短记录，稍后再转待办', icons.today],
+        ['todo', '待办', '截止、提醒与执行人', icons.plans],
+        ['event', '日程', '占用一段时间的安排', icons.cal],
+        ['plan', '计划', '周期打卡，多人各自完成', icons.insights],
+      ];
+  // fix icons - note should use a note-like; use available set
+  items[0][3] = icons.today;
   return h('div', {
     className: 'modal',
     onClick: (e) => {
-      if (e.target.classList.contains('modal')) {
-        state.form = null;
-        render();
-      }
+      if (e.target.classList.contains('modal')) closeForm();
     },
   }, [
     h('div', { className: 'sheet', role: 'dialog', 'aria-label': '新建' }, [
       h('div', { className: 'handle' }),
-      h('h2', { text: '快速新建' }),
-      typeSeg,
-      h('div', { className: 'field' }, [h('label', { text: '标题' }), title]),
-      h('div', { className: 'field' }, [h('label', { text: '说明' }), body]),
-      f.type === 'note'
-        ? h('div', { className: 'chip-row' }, [
-            ['self', '仅自己'],
-            ['family', '全家可见'],
-          ].map(([id, label]) =>
-            h('button', {
-              className: `chip ${f.visibility === id ? 'on' : ''}`,
-              text: label,
-              onClick: () => {
-                f.visibility = id;
-                render();
-              },
-            })
-          ))
-        : null,
-      h('p', { className: 'eyebrow', text: '照片或附件 · 单文件 ≤ 20MB' }),
-      file,
-      attachRow,
-      h('div', { className: 'row', style: 'margin-top:16px;gap:10px' }, [
-        h('button', {
-          className: 'btn secondary grow',
-          text: '取消',
-          onClick: () => {
-            state.form = null;
-            render();
-          },
-        }),
-        h('button', {
-          className: 'btn grow',
-          text: '保存到本机',
-          onClick: async () => {
-            if (!f.title.trim()) return toast('请先填写标题');
-            const attachmentIds = [];
-            for (const a of f.attachments) {
-              try {
-                const media = await api.uploadMedia(a.file, { purpose: 'attachment', parentType: f.type });
-                attachmentIds.push(media.id);
-              } catch (e) {
-                toast(e.message);
-                return;
-              }
-            }
-            const base = { title: f.title.trim(), attachmentIds };
-            const me = api.getMember();
-            if (f.type === 'todo') {
-              await api.saveLocalEntity('todo', {
-                ...base,
-                notes: f.body,
-                assigneeIds: me ? [me.id] : ['guest'],
-                completions: {},
-              });
-            } else if (f.type === 'note') {
-              await api.saveLocalEntity('note', {
-                ...base,
-                body: f.body,
-                visibility: f.visibility,
-                pinned: false,
-              });
-            } else if (f.type === 'event') {
-              const baseDay = state.tab === 'cal' && state.calSelected
-                ? state.calSelected
-                : dayKey(new Date());
-              const start = new Date(`${baseDay}T09:00:00`);
-              if (Number.isNaN(start.getTime()) || start.getTime() < Date.now() - 864e5) {
-                const fallback = new Date();
-                fallback.setHours(fallback.getHours() + 1, 0, 0, 0);
-                start.setTime(fallback.getTime());
-              }
-              const end = new Date(start.getTime() + 3600e3);
-              await api.saveLocalEntity('event', {
-                ...base,
-                startAt: start.toISOString(),
-                endAt: end.toISOString(),
-                allDay: false,
-                participantIds: me ? [me.id] : ['guest'],
-              });
-            } else if (f.type === 'plan') {
-              await api.saveLocalEntity('plan', {
-                ...base,
-                notes: f.body,
-                cycle: 'daily',
-                reminder: '20:00',
-                executorIds: me ? [me.id] : ['guest'],
-              });
-            }
-            state.form = null;
-            if (f.type === 'event') state.tab = 'cal';
-            else if (f.type === 'plan') state.tab = 'plans';
-            else state.tab = 'today';
-            toast('已保存');
-            render();
-            maybeSync();
-          },
-        }),
-      ]),
+      h('h2', { text: '新建' }),
+      h(
+        'div',
+        { className: 'menu-list' },
+        items.map(([type, title, desc, icon]) =>
+          h('button', {
+            type: 'button',
+            className: 'menu-item',
+            onClick: () => openCreateForm(type),
+          }, [
+            h('span', { className: 'mi', html: icon }),
+            h('span', { className: 'grow' }, [
+              h('strong', { text: title }),
+              h('span', { text: desc }),
+            ]),
+            h('span', { className: 'chev', text: '›' }),
+          ])
+        )
+      ),
     ]),
   ]);
+}
+
+function formShell(title, bodyNodes, onSave, saveLabel) {
+  return h('div', { className: 'form-screen', role: 'dialog', 'aria-modal': 'true' }, [
+    h('div', { className: 'top' }, [
+      h('button', {
+        className: 'btn ghost',
+        text: '返回',
+        onClick: () => {
+          state.form = { mode: 'menu' };
+          render();
+        },
+      }),
+      h('h1', { text: title }),
+    ]),
+    h('div', { className: 'scroller' }, [
+      ...bodyNodes,
+      h('button', {
+        className: 'btn lg block',
+        style: 'margin-top:8px',
+        text: saveLabel,
+        onClick: onSave,
+      }),
+      h('button', {
+        className: 'btn ghost block',
+        text: '取消',
+        onClick: closeForm,
+      }),
+    ]),
+  ]);
+}
+
+function renderNoteForm(f) {
+  const d = f.draft;
+  const err = f.errors || {};
+  const me = api.getMember();
+  const title = h('input', { value: d.title, placeholder: '标题', maxlength: '40' });
+  title.addEventListener('input', () => (d.title = title.value));
+  const body = h('textarea', { rows: '4', placeholder: '想记的细节可以写在这里', maxlength: '1000' });
+  body.value = d.body || '';
+  body.addEventListener('input', () => (d.body = body.value));
+
+  const visOptions = me?.role === 'child'
+    ? [
+        ['self', '仅自己', '只有你能看到这条便签'],
+        ['members', '指定家长', '选择一位或多位家长一起看'],
+      ]
+    : [
+        ['self', '仅自己', '只有你能看到，适合私人备忘'],
+        ['members', '指定成员', '点选家人后，只有他们能看'],
+        ['family', '全家成人', '所有成人和家长可见，孩子默认看不到'],
+      ];
+
+  const vis = h(
+    'div',
+    { className: 'vis-grid', role: 'group', 'aria-label': '谁可以看' },
+    visOptions.map(([id, t, desc]) =>
+      h('button', {
+        type: 'button',
+        className: 'vis-card',
+        'aria-pressed': d.visibility === id,
+        onClick: () => draftPatch({ visibility: id }),
+      }, [
+        h('span', { className: 'grow' }, [h('strong', { text: t }), h('span', { text: desc })]),
+        h('span', { className: 'vis-check', text: '✓' }),
+      ])
+    )
+  );
+
+  const pick =
+    d.visibility === 'members'
+      ? peoplePicker('可见成员', d.memberIds || [], (ids) => draftPatch({ memberIds: ids }), err.memberIds)
+      : null;
+
+  return formShell(
+    '写便签',
+    [
+      fieldEl('标题', title, err.title),
+      fieldEl('正文', body),
+      h('p', { className: 'eyebrow', text: '谁可以看' }),
+      vis,
+      pick,
+      h('label', { className: 'choice' }, [
+        h('input', {
+          type: 'checkbox',
+          checked: d.pinned || false,
+          onChange: (e) => draftPatch({ pinned: e.target.checked }),
+        }),
+        '置顶这条便签',
+      ]),
+      attachBlock(d, 'note'),
+    ],
+    async () => {
+      f.errors = {};
+      if (!d.title.trim() || d.title.trim().length > 40) {
+        f.errors.title = '标题需 1–40 字';
+        render();
+        return;
+      }
+      if (d.visibility === 'members' && !(d.memberIds || []).length) {
+        f.errors.memberIds = '请至少选择一位成员';
+        render();
+        return;
+      }
+      try {
+        const attachmentIds = await uploadDraftAttachments(d, 'note');
+        await api.saveLocalEntity('note', {
+          title: d.title.trim(),
+          body: d.body || '',
+          visibility: d.visibility,
+          memberIds: d.visibility === 'members' ? d.memberIds : [],
+          pinned: !!d.pinned,
+          attachmentIds,
+        });
+        state.form = null;
+        state.tab = 'today';
+        toast('便签已保存');
+        render();
+        maybeSync();
+      } catch (e) {
+        toast(e.message);
+      }
+    },
+    '保存便签'
+  );
+}
+
+function renderTodoForm(f) {
+  const d = f.draft;
+  const err = f.errors || {};
+  const title = h('input', { value: d.title, placeholder: '要做的事', maxlength: '80' });
+  title.addEventListener('input', () => (d.title = title.value));
+  const notes = h('textarea', { rows: '3', placeholder: '补充说明（可空）', maxlength: '500' });
+  notes.value = d.notes || '';
+  notes.addEventListener('input', () => (d.notes = notes.value));
+  const due = h('input', { type: 'datetime-local', value: d.due || '' });
+  due.addEventListener('change', () => draftPatch({ due: due.value }));
+
+  const remind = h('select');
+  [
+    ['none', '不提醒'],
+    ['due', '截止时', !d.due],
+    ['before1h', '提前 1 小时', !d.due],
+    ['custom', '自定义时间'],
+  ].forEach(([v, label, disabled]) => {
+    const opt = h('option', { value: v, text: label });
+    if (disabled) opt.disabled = true;
+    if (d.reminderKind === v) opt.selected = true;
+    remind.append(opt);
+  });
+  remind.addEventListener('change', () => draftPatch({ reminderKind: remind.value }));
+
+  const custom =
+    d.reminderKind === 'custom'
+      ? fieldEl(
+          '提醒时间',
+          (() => {
+            const inp = h('input', { type: 'datetime-local', value: d.customReminder || '' });
+            inp.addEventListener('change', () => draftPatch({ customReminder: inp.value }));
+            return inp;
+          })(),
+          err.customReminder
+        )
+      : null;
+
+  return formShell(
+    '写待办',
+    [
+      fieldEl('标题', title, err.title),
+      fieldEl('补充说明', notes),
+      fieldEl('截止时间', due),
+      fieldEl('提醒', remind),
+      custom,
+      peoplePicker('执行人', d.assigneeIds || [], (ids) => draftPatch({ assigneeIds: ids }), err.assignees),
+      attachBlock(d, 'todo'),
+    ],
+    async () => {
+      f.errors = {};
+      if (!d.title.trim()) {
+        f.errors.title = '请填写标题';
+        render();
+        return;
+      }
+      const assignees = d.assigneeIds?.length ? d.assigneeIds : [myId()];
+      if (!assignees.length) {
+        f.errors.assignees = '至少选择一名执行人';
+        render();
+        return;
+      }
+      if (d.reminderKind === 'custom') {
+        if (!d.customReminder || new Date(d.customReminder).getTime() <= Date.now()) {
+          f.errors.customReminder = '提醒时间要晚于现在';
+          render();
+          return;
+        }
+      }
+      try {
+        const attachmentIds = await uploadDraftAttachments(d, 'todo');
+        await api.saveLocalEntity('todo', {
+          title: d.title.trim(),
+          notes: d.notes || '',
+          dueAt: d.due ? new Date(d.due).toISOString() : null,
+          reminderKind: d.reminderKind,
+          remindAt: computeTodoRemindAt(d),
+          assigneeIds: assignees,
+          completions: {},
+          attachmentIds,
+        });
+        state.form = null;
+        state.tab = 'today';
+        toast('待办已保存');
+        render();
+        maybeSync();
+      } catch (e) {
+        toast(e.message);
+      }
+    },
+    '保存待办'
+  );
+}
+
+function renderEventForm(f) {
+  const d = f.draft;
+  const err = f.errors || {};
+  const title = h('input', { value: d.title, placeholder: '日程标题', maxlength: '80' });
+  title.addEventListener('input', () => (d.title = title.value));
+
+  const allday = h('label', { className: 'choice' }, [
+    h('input', {
+      type: 'checkbox',
+      checked: !!d.allday,
+      onChange: (e) => draftPatch({ allday: e.target.checked }),
+    }),
+    '全天',
+  ]);
+
+  let timeFields;
+  if (d.allday) {
+    const date = h('input', { type: 'date', value: d.date || dayKey(new Date()) });
+    date.addEventListener('change', () => draftPatch({ date: date.value }));
+    const kind = h('select');
+    [
+      ['none', '不提醒'],
+      ['day9', '当天 09:00'],
+      ['prev9', '提前一天 09:00'],
+    ].forEach(([v, label]) => {
+      const opt = h('option', { value: v, text: label });
+      if (d.reminderKind === v) opt.selected = true;
+      kind.append(opt);
+    });
+    kind.addEventListener('change', () => draftPatch({ reminderKind: kind.value }));
+    timeFields = [fieldEl('日期', date, err.date), fieldEl('提醒', kind)];
+  } else {
+    const start = h('input', { type: 'datetime-local', value: d.start || '' });
+    start.addEventListener('change', () => draftPatch({ start: start.value }));
+    const end = h('input', { type: 'datetime-local', value: d.end || '' });
+    end.addEventListener('change', () => draftPatch({ end: end.value }));
+    const kind = h('select');
+    [
+      ['none', '不提醒'],
+      ['start', '开始时'],
+      ['m10', '提前 10 分钟'],
+      ['h1', '提前 1 小时'],
+    ].forEach(([v, label]) => {
+      const opt = h('option', { value: v, text: label });
+      if (d.reminderKind === v) opt.selected = true;
+      kind.append(opt);
+    });
+    kind.addEventListener('change', () => draftPatch({ reminderKind: kind.value }));
+    timeFields = [
+      fieldEl('开始', start, err.start),
+      fieldEl('结束', end, err.end),
+      fieldEl('提醒', kind),
+    ];
+  }
+
+  return formShell(
+    '新建日程',
+    [
+      fieldEl('标题', title, err.title),
+      allday,
+      ...timeFields,
+      peoplePicker('参与人', d.participantIds || [], (ids) => draftPatch({ participantIds: ids }), err.participants),
+      attachBlock(d, 'event'),
+    ],
+    async () => {
+      f.errors = {};
+      if (!d.title.trim()) {
+        f.errors.title = '请填写标题';
+        render();
+        return;
+      }
+      const participants = d.participantIds?.length ? d.participantIds : [myId()];
+      if (!participants.length) {
+        f.errors.participants = '至少选择一名参与人';
+        render();
+        return;
+      }
+      let startAt;
+      let endAt;
+      if (d.allday) {
+        if (!d.date) {
+          f.errors.date = '请选择日期';
+          render();
+          return;
+        }
+        startAt = new Date(d.date + 'T00:00:00').toISOString();
+        endAt = new Date(d.date + 'T23:59:59').toISOString();
+      } else {
+        if (!d.start) {
+          f.errors.start = '请填写开始时间';
+          render();
+          return;
+        }
+        if (!d.end || new Date(d.end) <= new Date(d.start)) {
+          f.errors.end = '结束时间必须晚于开始时间';
+          render();
+          return;
+        }
+        startAt = new Date(d.start).toISOString();
+        endAt = new Date(d.end).toISOString();
+      }
+      try {
+        const attachmentIds = await uploadDraftAttachments(d, 'event');
+        await api.saveLocalEntity('event', {
+          title: d.title.trim(),
+          allDay: !!d.allday,
+          startAt,
+          endAt,
+          reminderKind: d.reminderKind,
+          remindAt: computeEventRemindAt(d, startAt),
+          participantIds: participants,
+          attachmentIds,
+        });
+        state.form = null;
+        state.tab = 'cal';
+        if (d.allday && d.date) state.calSelected = d.date;
+        else if (d.start) state.calSelected = dayKey(new Date(d.start));
+        toast('日程已保存');
+        render();
+        maybeSync();
+      } catch (e) {
+        toast(e.message);
+      }
+    },
+    '保存日程'
+  );
+}
+
+function renderPlanForm(f) {
+  const d = f.draft;
+  const err = f.errors || {};
+  const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
+  const title = h('input', { value: d.title, placeholder: '计划标题', maxlength: '80' });
+  title.addEventListener('input', () => (d.title = title.value));
+  const desc = h('textarea', { rows: '3', placeholder: '说明（可空）' });
+  desc.value = d.desc || '';
+  desc.addEventListener('input', () => (d.desc = desc.value));
+
+  const cycle = h('select');
+  [
+    ['daily', '每天'],
+    ['weekly', '每周'],
+    ['monthly', '每月'],
+    ['interval', '每 N 天'],
+  ].forEach(([v, label]) => {
+    const opt = h('option', { value: v, text: label });
+    if (d.cycleType === v) opt.selected = true;
+    cycle.append(opt);
+  });
+  cycle.addEventListener('change', () => draftPatch({ cycleType: cycle.value }));
+
+  let extra = null;
+  if (d.cycleType === 'weekly') {
+    extra = h('div', {}, [
+      h('h2', { className: 'block-title', text: '星期' }),
+      h(
+        'div',
+        { className: 'days' },
+        [1, 2, 3, 4, 5, 6, 0].map((n) =>
+          h('button', {
+            type: 'button',
+            'aria-pressed': (d.weekdays || []).includes(n),
+            text: WEEK[n],
+            onClick: () => draftPatch({ weekdays: toggleId(d.weekdays || [], n) }),
+          })
+        )
+      ),
+      err.weekdays ? h('p', { className: 'err', text: err.weekdays }) : null,
+    ]);
+  } else if (d.cycleType === 'monthly') {
+    const inp = h('input', { type: 'number', min: '1', max: '28', value: String(d.monthDay || 1) });
+    inp.addEventListener('change', () => draftPatch({ monthDay: Number(inp.value) || 1 }));
+    extra = fieldEl('每月几日（1–28）', inp, err.monthDay);
+  } else if (d.cycleType === 'interval') {
+    const inp = h('input', { type: 'number', min: '2', max: '30', value: String(d.interval || 2) });
+    inp.addEventListener('change', () => draftPatch({ interval: Number(inp.value) || 2 }));
+    extra = fieldEl('间隔天数（2–30）', inp, err.interval);
+  }
+
+  const start = h('input', { type: 'date', value: d.start || dayKey(new Date()) });
+  start.addEventListener('change', () => draftPatch({ start: start.value }));
+  const end = h('input', { type: 'date', value: d.end || '' });
+  end.addEventListener('change', () => draftPatch({ end: end.value }));
+
+  const remind = h('label', { className: 'choice' }, [
+    h('input', {
+      type: 'checkbox',
+      checked: !!d.remind,
+      onChange: (e) => draftPatch({ remind: e.target.checked }),
+    }),
+    '每个发生日提醒',
+  ]);
+  const remindTime = d.remind
+    ? fieldEl(
+        '提醒时刻',
+        (() => {
+          const inp = h('input', { type: 'time', value: d.remindTime || '20:00' });
+          inp.addEventListener('change', () => draftPatch({ remindTime: inp.value }));
+          return inp;
+        })()
+      )
+    : null;
+
+  return formShell(
+    '新建计划',
+    [
+      fieldEl('标题', title, err.title),
+      fieldEl('说明', desc),
+      fieldEl('周期', cycle),
+      extra,
+      fieldEl('开始日期', start, err.start),
+      fieldEl('结束日期（可空）', end, err.end),
+      remind,
+      remindTime,
+      peoplePicker('执行人', d.assigneeIds || [], (ids) => draftPatch({ assigneeIds: ids }), err.assignees),
+      attachBlock(d, 'plan'),
+    ],
+    async () => {
+      f.errors = {};
+      if (!d.title.trim()) {
+        f.errors.title = '请填写标题';
+        render();
+        return;
+      }
+      if (d.cycleType === 'weekly' && !(d.weekdays || []).length) {
+        f.errors.weekdays = '请至少选择一个星期';
+        render();
+        return;
+      }
+      if (d.cycleType === 'monthly') {
+        const day = Number(d.monthDay);
+        if (!day || day < 1 || day > 28) {
+          f.errors.monthDay = '请填写 1–28 日';
+          render();
+          return;
+        }
+      }
+      if (d.cycleType === 'interval') {
+        const n = Number(d.interval);
+        if (!n || n < 2 || n > 30) {
+          f.errors.interval = '间隔需为 2–30 天';
+          render();
+          return;
+        }
+      }
+      if (!d.start) {
+        f.errors.start = '请选择开始日期';
+        render();
+        return;
+      }
+      if (d.end && d.end < d.start) {
+        f.errors.end = '结束日期不能早于开始日期';
+        render();
+        return;
+      }
+      const assignees = d.assigneeIds?.length ? d.assigneeIds : [myId()];
+      if (!assignees.length) {
+        f.errors.assignees = '至少选择一名执行人';
+        render();
+        return;
+      }
+      try {
+        const attachmentIds = await uploadDraftAttachments(d, 'plan');
+        await api.saveLocalEntity('plan', {
+          title: d.title.trim(),
+          notes: d.desc || '',
+          cycle: d.cycleType,
+          weekdays: d.cycleType === 'weekly' ? d.weekdays : [],
+          monthDay: d.cycleType === 'monthly' ? Number(d.monthDay) : null,
+          interval: d.cycleType === 'interval' ? Number(d.interval) : null,
+          startDate: d.start,
+          endDate: d.end || null,
+          reminder: d.remind ? d.remindTime || '20:00' : null,
+          executorIds: assignees,
+          archived: false,
+          attachmentIds,
+        });
+        state.form = null;
+        state.tab = 'plans';
+        toast('计划已保存');
+        render();
+        maybeSync();
+      } catch (e) {
+        toast(e.message);
+      }
+    },
+    '保存计划'
+  );
+}
+
+function renderCreateModal() {
+  if (!state.form) return null;
+  if (state.form.mode === 'menu') return renderCreateMenu();
+  if (state.form.mode === 'edit') {
+    if (state.form.type === 'note') return renderNoteForm(state.form);
+    if (state.form.type === 'todo') return renderTodoForm(state.form);
+    if (state.form.type === 'event') return renderEventForm(state.form);
+    if (state.form.type === 'plan') return renderPlanForm(state.form);
+  }
+  // legacy fallback
+  return null;
 }
 
 async function renderHome() {
@@ -1354,8 +1957,8 @@ async function render() {
   else if (state.screen === 'merge') view = renderMerge();
   else view = await renderHome();
   root.append(view);
-  const focusEl = root.querySelector('.sheet input');
-  if (focusEl) setTimeout(() => focusEl.focus(), 50);
+  const focusEl = root.querySelector('.form-screen input, .form-screen textarea, .sheet .menu-item');
+  if (focusEl && focusEl.tagName !== 'BUTTON') setTimeout(() => focusEl.focus(), 50);
   const calPage = root.querySelector('.cal-page');
   if (calPage && typeof calPage._bindCalPull === 'function') {
     requestAnimationFrame(() => calPage._bindCalPull());
