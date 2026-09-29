@@ -3,8 +3,8 @@
   "short_name": "LuckyTodo",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#1c1428",
-  "theme_color": "#1c1428",
+  "background_color": "#0e1518",
+  "theme_color": "#0e1518",
   "lang": "zh-CN",
   "icons": []
 }
