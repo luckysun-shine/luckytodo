@@ -94,14 +94,8 @@ function h(tag, attrs = {}, children = []) {
   return el;
 }
 
-async function loadMembers() {
-  state.members = (await db.kvGet('members', [])) || [];
-  const me = api.getMember();
-  if (me && !state.members.find((m) => m.id === me.id)) state.members.unshift(me);
-}
-
 async function maybeSync() {
-  if (!api.getToken() || !state.online) return;
+  if (!api.isFamilyMode() || !state.online) return;
   try {
     await api.syncNow();
     await loadMembers();
@@ -115,15 +109,21 @@ async function maybeSync() {
 async function afterLogin(session) {
   api.setSession(session);
   await db.kvSet('serverRevision', session.serverRevision || 0);
-  const guestCount = await api.countGuestRecords();
-  if (guestCount > 0) {
+  const localCount = await api.countGuestRecords();
+  if (localCount > 0) {
     state.screen = 'merge';
-    state.mergeCount = guestCount;
+    state.mergeCount = localCount;
     render();
     return;
   }
   state.screen = 'home';
   await maybeSync();
+  render();
+}
+
+async function afterLocalLogin() {
+  state.screen = 'home';
+  await loadMembers();
   render();
 }
 
@@ -243,25 +243,21 @@ async function listActive(type) {
   return rows.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
 }
 
+async function loadMembers() {
+  if (api.isFamilyMode()) {
+    state.members = (await db.kvGet('members', [])) || [];
+  } else {
+    state.members = (await db.kvGet('members', [])) || [];
+  }
+  const me = api.getMember();
+  if (me && !state.members.find((m) => m.id === me.id)) state.members = [me, ...state.members];
+  if (!api.isFamilyMode() && me) state.members = [me];
+}
+
 async function boot() {
   applyChrome();
-  const server = api.apiBase();
-  if (!server && !localStorage.getItem('lt_server')) {
-    // same-origin default still counts via apiBase()
-  }
-  if (!api.getToken()) {
-    try {
-      if (api.apiBase()) {
-        const health = await api.health();
-        state.health = health;
-        state.screen = health.initialized ? 'login' : 'setup';
-      } else {
-        state.screen = 'connect';
-      }
-    } catch {
-      state.screen = api.apiBase() ? 'login' : 'connect';
-      state.guestMode = true;
-    }
+  if (!api.isLoggedIn()) {
+    state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
     render();
     return;
   }
@@ -269,6 +265,94 @@ async function boot() {
   await loadMembers();
   render();
   maybeSync().then(render);
+}
+
+function renderLocalRegister() {
+  const fields = {};
+  const field = (key, label, type = 'text') => {
+    fields[key] = h('input', {
+      type,
+      autocomplete: key.includes('pass') ? 'new-password' : key === 'username' ? 'username' : 'nickname',
+    });
+    return h('div', { className: 'field' }, [h('label', { text: label }), fields[key]]);
+  };
+  return h('div', { className: 'screen auth' }, [
+    h('div', { className: 'brand' }, [
+      h('div', { className: 'mark', text: 'L' }),
+      h('h1', { text: '创建本机账号' }),
+      h('p', { text: '首次使用需要登录。可不连接 NAS，本机离线使用；之后可在「我的」里连接家庭服务器做同步。' }),
+    ]),
+    field('displayName', '显示名'),
+    field('username', '用户名（小写字母数字）'),
+    field('password', '密码（至少 6 位）', 'password'),
+    field('password2', '再输入一次密码', 'password'),
+    h('div', { className: 'auth-actions' }, [
+      h('button', {
+        className: 'btn lg block',
+        text: '创建并进入',
+        onClick: async () => {
+          if (fields.password.value !== fields.password2.value) return toast('两次密码不一致');
+          try {
+            await api.createLocalAccount({
+              displayName: fields.displayName.value,
+              username: fields.username.value,
+              password: fields.password.value,
+            });
+            await afterLocalLogin();
+          } catch (e) {
+            toast(e.message);
+          }
+        },
+      }),
+      api.hasLocalAccounts()
+        ? h('button', {
+            className: 'btn ghost block',
+            text: '已有本机账号，去登录',
+            onClick: () => {
+              state.screen = 'local-login';
+              render();
+            },
+          })
+        : null,
+    ]),
+  ]);
+}
+
+function renderLocalLogin() {
+  const user = h('input', { autocomplete: 'username' });
+  const pass = h('input', { type: 'password', autocomplete: 'current-password' });
+  return h('div', { className: 'screen auth' }, [
+    h('div', { className: 'brand' }, [
+      h('div', { className: 'mark', text: 'L' }),
+      h('h1', { text: '登录' }),
+      h('p', { text: '使用本机账号登录。未连接家庭服务器时，数据只保存在这台设备。' }),
+    ]),
+    h('div', { className: 'field' }, [h('label', { text: '用户名' }), user]),
+    h('div', { className: 'field' }, [h('label', { text: '密码' }), pass]),
+    h('div', { className: 'auth-actions' }, [
+      h('button', {
+        className: 'btn lg block',
+        text: '登录',
+        onClick: async () => {
+          if (!user.value.trim()) return toast('请填写用户名');
+          try {
+            await api.loginLocalAccount({ username: user.value, password: pass.value });
+            await afterLocalLogin();
+          } catch (e) {
+            toast(e.message);
+          }
+        },
+      }),
+      h('button', {
+        className: 'btn secondary block',
+        text: '创建新的本机账号',
+        onClick: () => {
+          state.screen = 'local-register';
+          render();
+        },
+      }),
+    ]),
+  ]);
 }
 
 function renderConnect() {
@@ -281,8 +365,8 @@ function renderConnect() {
   return h('div', { className: 'screen auth' }, [
     h('div', { className: 'brand' }, [
       h('div', { className: 'mark', text: 'L' }),
-      h('h1', { text: 'LuckyTodo' }),
-      h('p', { text: '家庭待办放在自己的 NAS 上。先连接飞牛上的服务地址。' }),
+      h('h1', { text: '连接家庭服务器' }),
+      h('p', { text: '填写飞牛上的 HTTPS 地址后，才能多账号关联与多端同步。也可稍后再连。' }),
     ]),
     h('div', { className: 'field' }, [h('label', { text: '服务器地址（HTTPS）' }), urlInput]),
     h('div', { className: 'auth-actions' }, [
@@ -292,12 +376,15 @@ function renderConnect() {
         onClick: async () => {
           const url = urlInput.value.trim().replace(/\/$/, '');
           if (!url) return toast('请填写服务器地址');
+          if (!/^https:\/\//i.test(url) && location.hostname !== '127.0.0.1' && location.hostname !== 'localhost') {
+            toast('请使用 HTTPS 地址');
+          }
           api.setApiBase(url);
           try {
             const health = await api.health();
-            toast(health.initialized ? '已连接，请登录' : '已连接，可以创建家庭');
+            toast(health.initialized ? '已连接，请登录家庭账号' : '已连接，可以创建家庭');
             state.health = health;
-            state.screen = health.initialized ? 'login' : 'setup';
+            state.screen = health.initialized ? 'family-login' : 'setup';
             render();
           } catch (e) {
             toast(e.message || '连不上服务器，请检查地址与网络');
@@ -305,11 +392,11 @@ function renderConnect() {
         },
       }),
       h('button', {
-        className: 'btn secondary block',
-        text: '先在本机试用',
+        className: 'btn ghost block',
+        text: '返回',
         onClick: () => {
-          state.guestMode = true;
-          state.screen = 'home';
+          state.screen = api.isLoggedIn() ? 'home' : api.hasLocalAccounts() ? 'local-login' : 'local-register';
+          if (state.screen === 'home') state.tab = 'me';
           render();
         },
       }),
@@ -330,7 +417,7 @@ function renderSetup() {
     h('div', { className: 'brand' }, [
       h('div', { className: 'mark', text: 'L' }),
       h('h1', { text: '创建家庭' }),
-      h('p', { text: '你将成为管理员。时区固定为中国标准时间。' }),
+      h('p', { text: '在 NAS 上创建家庭空间。你将成为管理员。时区：中国标准时间。' }),
     ]),
     field('familyName', '家庭名称'),
     field('displayName', '你的显示名'),
@@ -361,7 +448,7 @@ function renderSetup() {
       }),
       h('button', {
         className: 'btn ghost block',
-        text: '返回连接',
+        text: '返回',
         onClick: () => {
           state.screen = 'connect';
           render();
@@ -371,21 +458,21 @@ function renderSetup() {
   ]);
 }
 
-function renderLogin() {
+function renderFamilyLogin() {
   const user = h('input', { autocomplete: 'username' });
   const pass = h('input', { type: 'password', autocomplete: 'current-password' });
   return h('div', { className: 'screen auth' }, [
     h('div', { className: 'brand' }, [
       h('div', { className: 'mark', text: 'L' }),
-      h('h1', { text: '欢迎回家' }),
-      h('p', { text: '登录家庭账号，事项会在多台手机之间同步。' }),
+      h('h1', { text: '登录家庭账号' }),
+      h('p', { text: `服务器：${api.apiBase() || '未设置'}。登录后可同步与多账号关联。` }),
     ]),
     h('div', { className: 'field' }, [h('label', { text: '用户名' }), user]),
     h('div', { className: 'field' }, [h('label', { text: '密码' }), pass]),
     h('div', { className: 'auth-actions' }, [
       h('button', {
         className: 'btn lg block',
-        text: '登录',
+        text: '登录家庭账号',
         onClick: async () => {
           if (!user.value.trim()) return toast('请填写用户名');
           try {
@@ -397,15 +484,6 @@ function renderLogin() {
           } catch (e) {
             toast(e.message);
           }
-        },
-      }),
-      h('button', {
-        className: 'btn secondary block',
-        text: '本机访客模式',
-        onClick: () => {
-          state.guestMode = true;
-          state.screen = 'home';
-          render();
         },
       }),
       h('button', {
@@ -426,7 +504,7 @@ function renderMerge() {
       h('div', { className: 'mark', text: '⇄' }),
       h('h1', { text: '合并本机记录？' }),
       h('p', {
-        text: `检测到本机有 ${state.mergeCount || 0} 条未同步记录。合并后进入当前家庭账号，联网后自动上传。`,
+        text: `检测到本机有 ${state.mergeCount || 0} 条离线记录。合并后进入当前家庭账号，联网后自动同步。`,
       }),
     ]),
     h('div', { className: 'auth-actions' }, [
@@ -434,7 +512,7 @@ function renderMerge() {
         className: 'btn lg block',
         text: '合并到当前账号',
         onClick: async () => {
-          const n = await api.mergeGuestData();
+          const n = await api.mergeLocalDataToFamily();
           toast(`已合并 ${n} 条`);
           state.screen = 'home';
           await maybeSync();
@@ -451,9 +529,9 @@ function renderMerge() {
       }),
       h('button', {
         className: 'btn danger block',
-        text: '清空本机访客数据',
+        text: '清空这些本机记录',
         onClick: async () => {
-          if (!confirm('确定清空本机访客数据？此操作不可恢复。')) return;
+          if (!confirm('确定清空本机离线记录？此操作不可恢复。')) return;
           await api.clearGuestData();
           toast('已清空');
           state.screen = 'home';
@@ -492,9 +570,9 @@ function tabs() {
 
 function offlineBanner() {
   if (state.hideBanner) return null;
-  if (!state.online) {
+  if (!api.isFamilyMode()) {
     return h('div', { className: 'banner' }, [
-      h('span', { className: 'grow', text: '当前离线，改动会在联网后同步' }),
+      h('span', { className: 'grow', text: '本机使用中，数据仅保存在此设备。可在「我的」连接家庭服务器开启同步。' }),
       h('button', {
         className: 'x',
         'aria-label': '关闭提示',
@@ -507,14 +585,16 @@ function offlineBanner() {
       }),
     ]);
   }
-  if (!api.getToken()) {
+  if (!state.online) {
     return h('div', { className: 'banner' }, [
-      h('span', { className: 'grow', text: '访客模式：登录后可合并并同步到家庭' }),
+      h('span', { className: 'grow', text: '当前离线，改动会在联网后同步' }),
       h('button', {
-        className: 'btn ghost',
-        text: '去登录',
+        className: 'x',
+        'aria-label': '关闭提示',
+        text: '×',
         onClick: () => {
-          state.screen = api.apiBase() ? 'login' : 'connect';
+          state.hideBanner = true;
+          sessionStorage.setItem('lt_hide_banner', '1');
           render();
         },
       }),
@@ -554,7 +634,7 @@ async function renderTodayBody() {
     const done = (t.payload.completions || {})[me?.id || 'guest'] === 'done';
     const meta = [
       t.payload.dueAt ? `截止 ${fmt(t.payload.dueAt)}` : null,
-      t.syncStatus === 'pending' ? '待同步' : null,
+      api.isFamilyMode() && t.syncStatus === 'pending' ? '待同步' : null,
     ]
       .filter(Boolean)
       .join(' · ');
@@ -919,49 +999,88 @@ async function renderMeBody() {
       className: 'avatar',
       'aria-label': '更换头像',
       onClick: () => {
-        if (!me) return toast('登录后可设置头像');
+        if (!me) return toast('请先登录');
         fileInput.click();
       },
     },
-    [me?.displayName?.[0] || '访', h('span', { className: 'cam', text: '✎' })]
+    [me?.displayName?.[0] || '?', h('span', { className: 'cam', text: '✎' })]
   );
 
+  const familyMode = api.isFamilyMode();
   const wrap = h('div', {}, [
     fileInput,
     h('div', { className: 'card row' }, [
       avatar,
       h('div', { className: 'grow' }, [
-        h('h3', { text: me?.displayName || '本机访客' }),
-        h('p', { text: me ? `${roleLabel(me.role)} · @${me.username}` : '未登录 · 数据仅本机' }),
-        h('p', { text: family ? family.name : api.apiBase() || '未连接服务器' }),
-      ]),
-    ]),
-    h('div', { className: 'card' }, [
-      h('div', { className: 'row' }, [
-        h('div', { className: 'grow' }, [
-          h('h3', { text: '同步' }),
-          h('p', {
-            text: lastSync
-              ? `最近 ${fmt(lastSync)} · 队列 ${queue.length}`
-              : `尚未同步 · 队列 ${queue.length}`,
-          }),
-        ]),
-        h('button', {
-          className: 'icon-btn',
-          'aria-label': '立即同步',
-          html: icons.sync,
-          onClick: async () => {
-            try {
-              const r = await api.syncNow();
-              toast(r.skipped ? '请先登录再同步' : `已同步，拉取 ${r.pullCount} 条`);
-              render();
-            } catch (e) {
-              toast(e.message);
-            }
-          },
+        h('h3', { text: me?.displayName || '未登录' }),
+        h('p', {
+          text: me
+            ? `${roleLabel(me.role)} · @${me.username}`
+            : '请先登录',
+        }),
+        h('p', {
+          text: familyMode
+            ? `家庭：${family?.name || '已连接'} · 可同步`
+            : '本机账号 · 离线本地使用',
         }),
       ]),
     ]),
+  ]);
+
+  if (familyMode) {
+    appendNodes(
+      wrap,
+      h('div', { className: 'card' }, [
+        h('div', { className: 'row' }, [
+          h('div', { className: 'grow' }, [
+            h('h3', { text: '同步' }),
+            h('p', {
+              text: lastSync
+                ? `最近 ${fmt(lastSync)} · 队列 ${queue.length}`
+                : `尚未同步 · 队列 ${queue.length}`,
+            }),
+          ]),
+          h('button', {
+            className: 'icon-btn',
+            'aria-label': '立即同步',
+            html: icons.sync,
+            onClick: async () => {
+              try {
+                const r = await api.syncNow();
+                toast(r.skipped ? '当前无法同步' : `已同步，拉取 ${r.pullCount} 条`);
+                render();
+              } catch (e) {
+                toast(e.message);
+              }
+            },
+          }),
+        ]),
+        h('p', { className: 'muted', style: 'margin-top:8px', text: api.apiBase() }),
+      ])
+    );
+  } else {
+    appendNodes(
+      wrap,
+      h('div', { className: 'card' }, [
+        h('h3', { text: '家庭服务器' }),
+        h('p', {
+          text: '现在只在本机使用，没有多端同步和家庭多账号关联。连接飞牛 NAS 后即可开启。',
+        }),
+        h('button', {
+          className: 'btn secondary block',
+          style: 'margin-top:12px',
+          text: '连接家庭服务器',
+          onClick: () => {
+            state.screen = 'connect';
+            render();
+          },
+        }),
+      ])
+    );
+  }
+
+  appendNodes(
+    wrap,
     h('div', { className: 'section-label', text: '外观' }),
     h('div', { className: 'seg', style: 'margin-bottom:12px' }, [
       ['night', '夜航'],
@@ -1000,10 +1119,10 @@ async function renderMeBody() {
           render();
         },
       }),
-    ]),
-  ]);
+    ])
+  );
 
-  if (me?.role === 'admin') {
+  if (familyMode && me?.role === 'admin') {
     appendNodes(
       wrap,
       h('div', { className: 'section-label', text: '家庭成员' }),
@@ -1046,40 +1165,49 @@ async function renderMeBody() {
   appendNodes(
     wrap,
     h('div', { style: 'height:16px' }),
-    api.getToken()
+    h('button', {
+      className: 'btn secondary block',
+      text: '退出登录',
+      onClick: async () => {
+        if (familyMode) {
+          try {
+            await api.api('POST', '/api/auth/logout');
+          } catch {
+            /* ignore */
+          }
+        }
+        api.logout();
+        state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
+        render();
+      },
+    }),
+    familyMode
       ? h('button', {
-          className: 'btn secondary block',
-          text: '退出登录',
-          onClick: async () => {
-            try {
-              await api.api('POST', '/api/auth/logout');
-            } catch {
-              /* ignore */
+          className: 'btn ghost block',
+          text: '断开家庭服务器（改回本机使用）',
+          onClick: () => {
+            if (!confirm('断开后将停止同步，本机数据保留。可用本机账号继续离线使用。')) return;
+            const localMember = api.getMember();
+            api.clearApiBase();
+            localStorage.removeItem('lt_token');
+            if (localMember) {
+              api.setLocalSession({
+                id: localMember.id,
+                displayName: localMember.displayName,
+                username: localMember.username,
+                role: localMember.role || 'admin',
+                local: true,
+              });
+            } else {
+              api.logout();
             }
-            api.setSession(null);
-            state.screen = 'login';
+            state.tab = 'me';
+            state.screen = api.isLoggedIn() ? 'home' : 'local-login';
+            toast('已改回本机使用');
             render();
           },
         })
-      : h('button', {
-          className: 'btn lg block',
-          text: '登录家庭账号',
-          onClick: () => {
-            state.screen = api.apiBase() ? 'login' : 'connect';
-            render();
-          },
-        }),
-    h('button', {
-      className: 'btn ghost block',
-      text: '更换服务器',
-      onClick: () => {
-        if (confirm('更换后需要重新登录，本机皮肤设置会保留。')) {
-          api.setSession(null);
-          state.screen = 'connect';
-          render();
-        }
-      },
-    })
+      : null
   );
   return wrap;
 }
@@ -1155,11 +1283,23 @@ function defaultDraft(type) {
 }
 
 function openCreateSheet() {
+  if (!api.isLoggedIn()) {
+    state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
+    toast('请先登录');
+    render();
+    return;
+  }
   state.form = { mode: 'menu' };
   render();
 }
 
 function openCreateForm(type) {
+  if (!api.isLoggedIn()) {
+    state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
+    toast('请先登录');
+    render();
+    return;
+  }
   const me = api.getMember();
   if (me?.role === 'child' && (type === 'event' || type === 'plan')) {
     toast('儿童账号不能新建日程或计划');
@@ -1245,6 +1385,8 @@ function attachBlock(draft, entityType) {
 }
 
 function peoplePicker(label, selectedIds, onChange, err) {
+  // Multi-account assignment only after family server is connected.
+  if (!api.isFamilyMode()) return null;
   const me = api.getMember();
   if (me?.role === 'child') {
     return h('div', {}, [
@@ -1406,6 +1548,9 @@ function renderNoteForm(f) {
   body.value = d.body || '';
   body.addEventListener('input', () => (d.body = body.value));
 
+  const familyMode = api.isFamilyMode();
+  if (!familyMode) d.visibility = 'self';
+
   const visOptions = me?.role === 'child'
     ? [
         ['self', '仅自己', '只有你能看到这条便签'],
@@ -1417,24 +1562,26 @@ function renderNoteForm(f) {
         ['family', '全家成人', '所有成人和家长可见，孩子默认看不到'],
       ];
 
-  const vis = h(
-    'div',
-    { className: 'vis-grid', role: 'group', 'aria-label': '谁可以看' },
-    visOptions.map(([id, t, desc]) =>
-      h('button', {
-        type: 'button',
-        className: 'vis-card',
-        'aria-pressed': d.visibility === id,
-        onClick: () => draftPatch({ visibility: id }),
-      }, [
-        h('span', { className: 'grow' }, [h('strong', { text: t }), h('span', { text: desc })]),
-        h('span', { className: 'vis-check', text: '✓' }),
-      ])
-    )
-  );
+  const vis = familyMode
+    ? h(
+        'div',
+        { className: 'vis-grid', role: 'group', 'aria-label': '谁可以看' },
+        visOptions.map(([id, t, desc]) =>
+          h('button', {
+            type: 'button',
+            className: 'vis-card',
+            'aria-pressed': d.visibility === id,
+            onClick: () => draftPatch({ visibility: id }),
+          }, [
+            h('span', { className: 'grow' }, [h('strong', { text: t }), h('span', { text: desc })]),
+            h('span', { className: 'vis-check', text: '✓' }),
+          ])
+        )
+      )
+    : null;
 
   const pick =
-    d.visibility === 'members'
+    familyMode && d.visibility === 'members'
       ? peoplePicker('可见成员', d.memberIds || [], (ids) => draftPatch({ memberIds: ids }), err.memberIds)
       : null;
 
@@ -1443,7 +1590,7 @@ function renderNoteForm(f) {
     [
       fieldEl('标题', title, err.title),
       fieldEl('正文', body),
-      h('p', { className: 'eyebrow', text: '谁可以看' }),
+      familyMode ? h('p', { className: 'eyebrow', text: '谁可以看' }) : null,
       vis,
       pick,
       h('label', { className: 'choice' }, [
@@ -1463,7 +1610,8 @@ function renderNoteForm(f) {
         render();
         return;
       }
-      if (d.visibility === 'members' && !(d.memberIds || []).length) {
+      const visibility = familyMode ? d.visibility : 'self';
+      if (visibility === 'members' && !(d.memberIds || []).length) {
         f.errors.memberIds = '请至少选择一位成员';
         render();
         return;
@@ -1473,8 +1621,8 @@ function renderNoteForm(f) {
         await api.saveLocalEntity('note', {
           title: d.title.trim(),
           body: d.body || '',
-          visibility: d.visibility,
-          memberIds: d.visibility === 'members' ? d.memberIds : [],
+          visibility,
+          memberIds: visibility === 'members' ? d.memberIds : [],
           pinned: !!d.pinned,
           attachmentIds,
         });
@@ -1905,6 +2053,7 @@ async function renderHome() {
   };
   const body = await bodyMap[state.tab]();
   const me = api.getMember();
+  const familyMode = api.isFamilyMode();
   const top =
     state.tab === 'today'
       ? h('div', { className: 'top' }, [
@@ -1912,20 +2061,22 @@ async function renderHome() {
             h('p', { className: 'eyebrow', text: fmtDateNice() }),
             h('h1', { text: `${hello()}${me ? '，' + me.displayName : ''}` }),
           ]),
-          h('button', {
-            className: 'icon-btn',
-            'aria-label': '同步',
-            html: icons.sync,
-            onClick: async () => {
-              try {
-                const r = await api.syncNow();
-                toast(r.skipped ? '登录后可同步到家庭' : `已同步 ${r.pullCount} 条`);
-                render();
-              } catch (e) {
-                toast(e.message);
-              }
-            },
-          }),
+          familyMode
+            ? h('button', {
+                className: 'icon-btn',
+                'aria-label': '同步',
+                html: icons.sync,
+                onClick: async () => {
+                  try {
+                    const r = await api.syncNow();
+                    toast(r.skipped ? '当前无法同步' : `已同步 ${r.pullCount} 条`);
+                    render();
+                  } catch (e) {
+                    toast(e.message);
+                  }
+                },
+              })
+            : null,
         ])
       : h('div', { className: 'top' }, [h('h1', { text: titles[state.tab] })]);
 
@@ -1948,12 +2099,17 @@ async function renderHome() {
 
 async function render() {
   applyChrome();
+  if (state.screen === 'home' && !api.isLoggedIn()) {
+    state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
+  }
   root.innerHTML = '';
   root.append(h('div', { id: 'toast', className: 'toast', role: 'status' }));
   let view;
-  if (state.screen === 'connect') view = renderConnect();
+  if (state.screen === 'local-register') view = renderLocalRegister();
+  else if (state.screen === 'local-login') view = renderLocalLogin();
+  else if (state.screen === 'connect') view = renderConnect();
   else if (state.screen === 'setup') view = renderSetup();
-  else if (state.screen === 'login') view = renderLogin();
+  else if (state.screen === 'family-login') view = renderFamilyLogin();
   else if (state.screen === 'merge') view = renderMerge();
   else view = await renderHome();
   root.append(view);

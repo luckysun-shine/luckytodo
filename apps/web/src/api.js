@@ -2,22 +2,39 @@ import * as db from './db.js';
 
 const MAX_BYTES = 20 * 1024 * 1024;
 
+/** Explicitly configured NAS / family server only — never auto-use page origin. */
 export function apiBase() {
-  const saved = localStorage.getItem('lt_server');
-  if (saved) return saved;
-  if (typeof location !== 'undefined' && location.origin && !location.origin.startsWith('file:')) {
-    return location.origin;
-  }
-  return '';
+  return (localStorage.getItem('lt_server') || '').replace(/\/$/, '');
 }
 
 export function setApiBase(url) {
   const cleaned = String(url || '').trim().replace(/\/$/, '');
-  localStorage.setItem('lt_server', cleaned);
+  if (!cleaned) localStorage.removeItem('lt_server');
+  else localStorage.setItem('lt_server', cleaned);
+}
+
+export function clearApiBase() {
+  localStorage.removeItem('lt_server');
 }
 
 export function getToken() {
   return localStorage.getItem('lt_token') || '';
+}
+
+export function getMode() {
+  const mode = localStorage.getItem('lt_mode');
+  if (mode === 'local' || mode === 'family') return mode;
+  if (getToken()) return 'family';
+  if (getMember()) return 'local';
+  return null;
+}
+
+export function isFamilyMode() {
+  return getMode() === 'family' && !!getToken() && !!apiBase();
+}
+
+export function isLoggedIn() {
+  return !!getMember();
 }
 
 export function setSession(session) {
@@ -25,11 +42,30 @@ export function setSession(session) {
     localStorage.removeItem('lt_token');
     localStorage.removeItem('lt_member');
     localStorage.removeItem('lt_family');
+    localStorage.removeItem('lt_mode');
     return;
   }
+  localStorage.setItem('lt_mode', 'family');
   localStorage.setItem('lt_token', session.token);
   localStorage.setItem('lt_member', JSON.stringify(session.member));
   localStorage.setItem('lt_family', JSON.stringify(session.family));
+}
+
+export function setLocalSession(member) {
+  localStorage.setItem('lt_mode', 'local');
+  localStorage.removeItem('lt_token');
+  localStorage.setItem('lt_member', JSON.stringify(member));
+  localStorage.setItem(
+    'lt_family',
+    JSON.stringify({ id: 'local', name: '本机空间', local: true })
+  );
+}
+
+export function logout() {
+  localStorage.removeItem('lt_token');
+  localStorage.removeItem('lt_member');
+  localStorage.removeItem('lt_family');
+  localStorage.removeItem('lt_mode');
 }
 
 export function getMember() {
@@ -48,9 +84,78 @@ export function getFamily() {
   }
 }
 
+function readLocalAccounts() {
+  try {
+    return JSON.parse(localStorage.getItem('lt_local_accounts') || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalAccounts(list) {
+  localStorage.setItem('lt_local_accounts', JSON.stringify(list));
+}
+
+export function listLocalAccounts() {
+  return readLocalAccounts().map(({ passwordHash, ...rest }) => rest);
+}
+
+export function hasLocalAccounts() {
+  return readLocalAccounts().length > 0;
+}
+
+async function hashPassword(password) {
+  const data = new TextEncoder().encode(`luckytodo:${password}`);
+  const buf = await crypto.subtle.digest('SHA-256', data);
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export async function createLocalAccount({ displayName, username, password }) {
+  const name = String(displayName || '').trim();
+  const user = String(username || '').trim().toLowerCase();
+  const pass = String(password || '');
+  if (name.length < 1 || name.length > 20) throw new Error('显示名需 1–20 字');
+  if (!/^[a-z0-9]{3,20}$/.test(user)) throw new Error('用户名为 3–20 位小写字母或数字');
+  if (pass.length < 6 || pass.length > 64) throw new Error('密码需 6–64 位');
+  const accounts = readLocalAccounts();
+  if (accounts.some((a) => a.username === user)) throw new Error('用户名已存在');
+  const member = {
+    id: db.uuid(),
+    displayName: name,
+    username: user,
+    role: 'admin',
+    local: true,
+  };
+  accounts.push({ ...member, passwordHash: await hashPassword(pass) });
+  writeLocalAccounts(accounts);
+  setLocalSession(member);
+  await db.kvSet('members', [member]);
+  return member;
+}
+
+export async function loginLocalAccount({ username, password }) {
+  const user = String(username || '').trim().toLowerCase();
+  const pass = String(password || '');
+  const accounts = readLocalAccounts();
+  const found = accounts.find((a) => a.username === user);
+  if (!found) throw new Error('账号或密码不正确');
+  const hash = await hashPassword(pass);
+  if (hash !== found.passwordHash) throw new Error('账号或密码不正确');
+  const member = {
+    id: found.id,
+    displayName: found.displayName,
+    username: found.username,
+    role: found.role || 'admin',
+    local: true,
+  };
+  setLocalSession(member);
+  await db.kvSet('members', [member]);
+  return member;
+}
+
 export async function api(method, path, { body, token, raw } = {}) {
   const base = apiBase();
-  if (!base) throw Object.assign(new Error('未配置服务器'), { offline: true });
+  if (!base) throw Object.assign(new Error('未配置家庭服务器'), { offline: true });
   const headers = {};
   const t = token ?? getToken();
   if (t) headers.Authorization = `Bearer ${t}`;
@@ -86,36 +191,39 @@ export async function saveLocalEntity(entityType, payload, { id, deletedAt } = {
   const entityId = id || db.uuid();
   const updatedAt = db.nowIso();
   const member = getMember();
+  if (!member) throw new Error('请先登录');
+  const family = isFamilyMode();
   const entity = {
     id: entityId,
     entityType,
     payload: {
       ...payload,
-      createdBy: payload.createdBy || member?.id || 'guest',
+      createdBy: payload.createdBy || member.id,
     },
     updatedAt,
     revision: 0,
     deletedAt: deletedAt || null,
-    syncStatus: getToken() ? 'pending' : 'localOnly',
-    guest: !getToken(),
+    syncStatus: family ? 'pending' : 'localOnly',
+    guest: false,
   };
   await db.putEntity(entity);
-  const opId = db.uuid();
-  await db.enqueue({
-    opId,
-    id: entityId,
-    entityType,
-    payload: entity.payload,
-    updatedAt,
-    deletedAt: entity.deletedAt,
-    attempts: 0,
-    createdAt: updatedAt,
-  });
+  if (family) {
+    await db.enqueue({
+      opId: db.uuid(),
+      id: entityId,
+      entityType,
+      payload: entity.payload,
+      updatedAt,
+      deletedAt: entity.deletedAt,
+      attempts: 0,
+      createdAt: updatedAt,
+    });
+  }
   return entity;
 }
 
 export async function syncNow() {
-  if (!getToken()) return { skipped: true, reason: 'not logged in' };
+  if (!isFamilyMode()) return { skipped: true, reason: 'local-only' };
   const queue = await db.listQueue();
   let pushResult = null;
   if (queue.length) {
@@ -150,13 +258,16 @@ export async function syncNow() {
   return { pushResult, pullCount: (pull.entities || []).length, serverRevision: pull.serverRevision };
 }
 
-export async function mergeGuestData() {
+/** Promote local-only records into family sync queue after connecting NAS. */
+export async function mergeLocalDataToFamily() {
   const all = await db.allEntities();
   const member = getMember();
-  const guests = all.filter((e) => e.guest || e.syncStatus === 'localOnly');
-  for (const e of guests) {
+  const locals = all.filter((e) => !e.deletedAt && (e.syncStatus === 'localOnly' || e.guest));
+  for (const e of locals) {
     e.guest = false;
-    e.payload = { ...e.payload, createdBy: e.payload.createdBy === 'guest' ? member.id : e.payload.createdBy };
+    if (e.payload?.createdBy === 'guest' && member) {
+      e.payload = { ...e.payload, createdBy: member.id };
+    }
     e.syncStatus = 'pending';
     e.updatedAt = db.nowIso();
     await db.putEntity(e);
@@ -171,16 +282,16 @@ export async function mergeGuestData() {
       createdAt: e.updatedAt,
     });
   }
-  return guests.length;
+  return locals.length;
+}
+
+export async function mergeGuestData() {
+  return mergeLocalDataToFamily();
 }
 
 export async function clearGuestData() {
   const all = await db.allEntities();
   for (const e of all.filter((x) => x.guest || x.syncStatus === 'localOnly')) {
-    await db.putEntity({ ...e, deletedAt: db.nowIso(), syncStatus: 'localOnly' });
-  }
-  // also wipe guest entities entirely
-  for (const e of all.filter((x) => x.guest || x.payload?.createdBy === 'guest')) {
     await txDelete(e.id);
   }
 }
@@ -201,8 +312,7 @@ async function txDelete(id) {
 
 export async function countGuestRecords() {
   const all = await db.allEntities();
-  const guests = all.filter((e) => !e.deletedAt && (e.guest || e.syncStatus === 'localOnly'));
-  return guests.length;
+  return all.filter((e) => !e.deletedAt && (e.guest || e.syncStatus === 'localOnly')).length;
 }
 
 export function validateAttachment(file) {
@@ -216,7 +326,7 @@ export async function uploadMedia(file, { purpose = 'attachment', parentType, pa
   if (err) throw new Error(err);
   const localId = db.uuid();
   await db.putBlob(localId, file, { fileName: file.name, mimeType: file.type, size: file.size });
-  if (!getToken() || !navigator.onLine) {
+  if (!isFamilyMode() || !navigator.onLine) {
     return { id: localId, pending: true, fileName: file.name, mimeType: file.type, size: file.size };
   }
   const fd = new FormData();
