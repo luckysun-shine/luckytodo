@@ -27,6 +27,7 @@ const state = {
   members: [],
   hideBanner: sessionStorage.getItem('lt_hide_banner') === '1',
   mergeCount: 0,
+  planId: null,
   calCursor: (() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -814,17 +815,27 @@ async function renderTodayBody() {
     const execs = p.payload.executorIds || [];
     const mine = !me || execs.includes(me.id) || execs.length === 0;
     if (me?.role === 'child' && !execs.includes(me.id)) continue;
+    const prog = milestoneProgress(p.payload.milestones);
     appendNodes(
       wrap,
-      h('div', { className: 'card' }, [
+      h('div', { className: 'card pressable', onClick: () => openPlanDetail(p.id) }, [
         h('h3', { text: p.payload.title }),
-        h('p', { text: `${execs.length || 1} 人执行 · 提醒 ${p.payload.reminder || '未设置'}` }),
+        h('p', {
+          text: [
+            `${execs.length || 1} 人执行`,
+            p.payload.reminder ? `提醒 ${p.payload.reminder}` : null,
+            prog ? `里程碑 ${prog.done}/${prog.total}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+        }),
         mine
           ? h('button', {
               className: 'btn secondary',
               style: 'margin-top:12px',
               text: '打卡',
-              onClick: async () => {
+              onClick: async (e) => {
+                e.stopPropagation();
                 const feedback = prompt('一句反馈（可空）') || '';
                 await api.saveLocalEntity('checkin', {
                   planId: p.id,
@@ -841,6 +852,44 @@ async function renderTodayBody() {
           : null,
       ])
     );
+  }
+
+  const today = dayKey(new Date());
+  const dueMilestones = [];
+  for (const p of activePlans) {
+    for (const ms of p.payload.milestones || []) {
+      if (ms.status === 'done') continue;
+      if (ms.dueDate && ms.dueDate <= today) {
+        dueMilestones.push({ plan: p, ms });
+      }
+    }
+  }
+  if (dueMilestones.length) {
+    appendNodes(wrap, h('div', { className: 'section-label', text: `里程碑 · ${dueMilestones.length} 个待处理` }));
+    for (const { plan, ms } of dueMilestones.slice(0, 8)) {
+      const tone = milestoneTone(ms);
+      appendNodes(
+        wrap,
+        h('div', { className: 'card' }, [
+          h('h3', { text: ms.title }),
+          h('p', {
+            text: `${plan.payload.title} · ${ms.dueDate}${tone === 'overdue' ? ' · 已逾期' : ' · 今日到期'}${ms.remind && ms.remindTime ? ` · 提醒 ${ms.remindTime}` : ''}`,
+          }),
+          h('div', { className: 'ms-actions' }, [
+            h('button', {
+              className: 'btn',
+              text: '完成并记录',
+              onClick: () => promptMilestoneProgress(plan, ms),
+            }),
+            h('button', {
+              className: 'btn ghost',
+              text: '查看计划',
+              onClick: () => openPlanDetail(plan.id),
+            }),
+          ]),
+        ])
+      );
+    }
   }
 
   appendNodes(wrap, h('div', { className: 'section-label', text: '最近便签' }));
@@ -879,9 +928,21 @@ async function renderCalBody() {
     const key = localDayKeyFromIso(t.payload.dueAt);
     pushItem(key, { title: t.payload.title, when: t.payload.dueAt, kind: '待办', sort: t.payload.dueAt });
   }
-  // daily plans mark today and selected day lightly via reminder presence — mark all days in view? skip; only show in list if selected is today
+  // daily plans mark today; milestones mark their due dates
   const todayKey = dayKey(new Date());
   if (plans.length) marked.add(todayKey);
+  for (const p of plans) {
+    for (const ms of p.payload.milestones || []) {
+      if (!ms.dueDate) continue;
+      pushItem(ms.dueDate, {
+        title: `${p.payload.title} · ${ms.title}`,
+        when: ms.dueDate,
+        kind: ms.status === 'done' ? '里程碑·已完成' : '里程碑',
+        sort: `${ms.dueDate}T${ms.remindTime || '09:00'}:00`,
+        planId: p.id,
+      });
+    }
+  }
 
   const cursor = state.calCursor;
   const selected = state.calSelected;
@@ -976,9 +1037,16 @@ async function renderCalBody() {
     for (const it of dayItems) {
       appendNodes(
         list,
-        h('div', { className: 'card' }, [
+        h('div', {
+          className: it.planId ? 'card pressable' : 'card',
+          onClick: it.planId
+            ? () => openPlanDetail(it.planId)
+            : undefined,
+        }, [
           h('h3', { text: it.title }),
-          h('p', { text: `${it.kind} · ${fmt(it.when)}` }),
+          h('p', {
+            text: `${it.kind} · ${it.when?.includes?.('T') ? fmt(it.when) : it.when}`,
+          }),
         ])
       );
     }
@@ -1028,20 +1096,160 @@ async function renderPlansBody() {
   if (!plans.length) {
     appendNodes(
       wrap,
-      emptyState('还没有计划', '适合重复发生的家庭事项，每人单独打卡。', '新建计划', () => openCreateForm('plan'))
+      emptyState('还没有计划', '适合重复发生的家庭事项，也可拆成里程碑节点逐步推进。', '新建计划', () => openCreateForm('plan'))
     );
   }
   for (const p of plans) {
+    const prog = milestoneProgress(p.payload.milestones);
+    const cycleLabel = { daily: '每天', weekly: '每周', monthly: '每月', interval: '间隔' }[p.payload.cycle] || p.payload.cycle || '计划';
     appendNodes(
       wrap,
-      h('div', { className: 'card' }, [
+      h('div', {
+        className: 'card pressable',
+        onClick: () => openPlanDetail(p.id),
+      }, [
         h('h3', { text: p.payload.title }),
         h('p', {
-          text: p.payload.notes || `${p.payload.cycle || '每天'} · ${(p.payload.executorIds || []).length || 1} 人`,
+          text: p.payload.notes || `${cycleLabel} · ${(p.payload.executorIds || []).length || 1} 人`,
         }),
+        prog
+          ? h('div', {
+              className: 'progress-pill',
+              text: `里程碑 ${prog.done}/${prog.total} · ${prog.pct}%`,
+            })
+          : null,
       ])
     );
   }
+  return wrap;
+}
+
+async function renderPlanDetail() {
+  const plans = await listActive('plan');
+  const plan = plans.find((p) => p.id === state.planId);
+  if (!plan) {
+    state.screen = 'home';
+    state.tab = 'plans';
+    state.planId = null;
+    return renderHome();
+  }
+  const me = api.getMember();
+  const milestones = [...(plan.payload.milestones || [])].sort((a, b) =>
+    String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999'))
+  );
+  const prog = milestoneProgress(milestones);
+  const cycleLabel = { daily: '每天', weekly: '每周', monthly: '每月', interval: '间隔' }[plan.payload.cycle] || '计划';
+  const wrap = h('div', { className: 'screen' }, [
+    h('div', { className: 'top' }, [
+      h('button', {
+        className: 'auth-back',
+        text: '← 计划',
+        onClick: () => {
+          state.screen = 'home';
+          state.tab = 'plans';
+          state.planId = null;
+          render();
+        },
+      }),
+      h('h1', { text: plan.payload.title }),
+    ]),
+    h('div', { className: 'scroller' }, [
+      h('div', { className: 'card' }, [
+        h('p', {
+          className: 'eyebrow',
+          text: `${cycleLabel}${plan.payload.reminder ? ` · 周期提醒 ${plan.payload.reminder}` : ''}`,
+        }),
+        plan.payload.notes ? h('p', { text: plan.payload.notes }) : h('p', { className: 'muted', text: '暂无说明' }),
+        prog
+          ? h('div', {
+              className: 'progress-pill',
+              text: `里程碑进度 ${prog.done}/${prog.total}`,
+            })
+          : null,
+      ]),
+      h('div', { className: 'section-label', text: '里程碑' }),
+      milestones.length
+        ? h(
+            'div',
+            { className: 'ms-timeline' },
+            milestones.map((ms) => {
+              const tone = milestoneTone(ms);
+              const meta = [
+                ms.dueDate ? `目标 ${ms.dueDate}` : '未设日期',
+                ms.remind && ms.remindTime ? `提醒 ${ms.remindTime}` : null,
+                ms.status === 'done' ? '已完成' : tone === 'overdue' ? '已逾期' : tone === 'due' ? '今日到期' : '进行中',
+              ]
+                .filter(Boolean)
+                .join(' · ');
+              return h('div', { className: `ms-node ${tone} ${ms.status === 'done' ? 'done' : ''}` }, [
+                h('div', { className: 'ms-rail' }, [h('div', { className: 'ms-dot', 'aria-hidden': 'true' })]),
+                h('div', { className: `ms-body ${ms.status === 'done' ? 'done' : ''}` }, [
+                  h('h3', { text: ms.title }),
+                  h('p', { className: 'ms-meta', text: meta }),
+                  ms.progressNote ? h('div', { className: 'ms-note', text: ms.progressNote }) : null,
+                  h('div', { className: 'ms-actions' }, [
+                    ms.status !== 'done'
+                      ? h('button', {
+                          className: 'btn',
+                          text: '完成并记录',
+                          onClick: () => promptMilestoneProgress(plan, ms),
+                        })
+                      : h('button', {
+                          className: 'btn secondary',
+                          text: '更新完成情况',
+                          onClick: async () => {
+                            const note = prompt('更新完成情况', ms.progressNote || '');
+                            if (note === null) return;
+                            await updateMilestone(plan, ms.id, {
+                              progressNote: String(note).slice(0, 200),
+                            });
+                            toast('已更新');
+                            render();
+                            maybeSync();
+                          },
+                        }),
+                    ms.status === 'done'
+                      ? h('button', {
+                          className: 'btn ghost',
+                          text: '标为未完成',
+                          onClick: async () => {
+                            await updateMilestone(plan, ms.id, {
+                              status: 'open',
+                              completedAt: null,
+                              completedBy: null,
+                            });
+                            toast('已恢复为进行中');
+                            render();
+                            maybeSync();
+                          },
+                        })
+                      : null,
+                  ]),
+                ]),
+              ]);
+            })
+          )
+        : emptyState('还没有里程碑', '编辑计划时可添加节点，用于分阶段提醒与记录进度。', null),
+      h('div', { style: 'height:16px' }),
+      h('button', {
+        className: 'btn secondary block',
+        text: '今日打卡（周期）',
+        onClick: async () => {
+          const feedback = prompt('一句反馈（可空）') || '';
+          await api.saveLocalEntity('checkin', {
+            planId: plan.id,
+            memberId: me?.id || 'guest',
+            date: dayKey(new Date()),
+            status: 'done',
+            feedback,
+          });
+          toast('打卡成功');
+          render();
+          maybeSync();
+        },
+      }),
+    ]),
+  ]);
   return wrap;
 }
 
@@ -1356,6 +1564,80 @@ function myId() {
   return api.getMember()?.id || 'guest';
 }
 
+function newMilestoneDraft() {
+  return {
+    id: db.uuid(),
+    title: '',
+    dueDate: '',
+    remind: false,
+    remindTime: '09:00',
+  };
+}
+
+function normalizeMilestones(list) {
+  return (list || [])
+    .filter((m) => String(m.title || '').trim())
+    .map((m) => ({
+      id: m.id || db.uuid(),
+      title: String(m.title).trim().slice(0, 80),
+      dueDate: m.dueDate || null,
+      remind: !!(m.remind && m.dueDate),
+      remindTime: m.remind && m.dueDate ? m.remindTime || '09:00' : null,
+      status: m.status === 'done' ? 'done' : 'open',
+      progressNote: String(m.progressNote || '').slice(0, 200),
+      completedAt: m.completedAt || null,
+      completedBy: m.completedBy || null,
+    }));
+}
+
+function milestoneProgress(milestones) {
+  const list = milestones || [];
+  if (!list.length) return null;
+  const done = list.filter((m) => m.status === 'done').length;
+  return { total: list.length, done, pct: Math.round((done / list.length) * 100) };
+}
+
+function milestoneTone(ms) {
+  if (ms.status === 'done') return 'done';
+  if (!ms.dueDate) return '';
+  const today = dayKey(new Date());
+  if (ms.dueDate < today) return 'overdue';
+  if (ms.dueDate === today) return 'due';
+  return '';
+}
+
+function openPlanDetail(planId) {
+  state.planId = planId;
+  state.screen = 'plan-detail';
+  state.form = null;
+  render();
+}
+
+async function updateMilestone(planEntity, milestoneId, patch) {
+  const milestones = [...(planEntity.payload.milestones || [])];
+  const idx = milestones.findIndex((m) => m.id === milestoneId);
+  if (idx < 0) throw new Error('找不到该里程碑');
+  milestones[idx] = { ...milestones[idx], ...patch };
+  await api.saveLocalEntity('plan', { ...planEntity.payload, milestones }, { id: planEntity.id });
+  const all = await db.allEntities();
+  reminders.reschedule(all).catch(() => {});
+}
+
+async function promptMilestoneProgress(planEntity, ms) {
+  const note = prompt('补充完成情况（可空，最多 200 字）', ms.progressNote || '');
+  if (note === null) return;
+  const me = api.getMember();
+  await updateMilestone(planEntity, ms.id, {
+    status: 'done',
+    progressNote: String(note).slice(0, 200),
+    completedAt: db.nowIso(),
+    completedBy: me?.id || null,
+  });
+  toast('里程碑已完成');
+  render();
+  maybeSync();
+}
+
 function assignableMembers() {
   const me = api.getMember();
   let list = (state.members || []).filter((m) => !m.disabled);
@@ -1419,6 +1701,7 @@ function defaultDraft(type) {
     remindTime: '20:00',
     assigneeIds: [id],
     attachments: [],
+    milestones: [],
   };
 }
 
@@ -2076,6 +2359,78 @@ function renderPlanForm(f) {
       )
     : null;
 
+  if (!Array.isArray(d.milestones)) d.milestones = [];
+  const msEditor = h('div', {}, [
+    h('h2', { className: 'block-title', text: '里程碑节点' }),
+    h('p', { className: 'muted', style: 'margin:0 0 10px', text: '可选。到节点日提醒，并记录该节点的完成情况。' }),
+    h(
+      'div',
+      { className: 'ms-list' },
+      d.milestones.map((ms, i) => {
+        const title = h('input', { value: ms.title || '', placeholder: `节点 ${i + 1} 名称`, maxlength: '80' });
+        title.addEventListener('input', () => {
+          ms.title = title.value;
+        });
+        const due = h('input', { type: 'date', value: ms.dueDate || '' });
+        due.addEventListener('change', () => {
+          ms.dueDate = due.value;
+          draftPatch({});
+        });
+        const remindChk = h('label', { className: 'choice' }, [
+          h('input', {
+            type: 'checkbox',
+            checked: !!ms.remind,
+            disabled: !ms.dueDate,
+            onChange: (e) => {
+              ms.remind = e.target.checked;
+              draftPatch({});
+            },
+          }),
+          '到期日提醒',
+        ]);
+        const timeInp =
+          ms.remind && ms.dueDate
+            ? (() => {
+                const inp = h('input', { type: 'time', value: ms.remindTime || '09:00' });
+                inp.addEventListener('change', () => {
+                  ms.remindTime = inp.value;
+                });
+                return fieldEl('提醒时刻', inp);
+              })()
+            : null;
+        return h('div', { className: 'ms-row' }, [
+          h('div', { className: 'ms-row-top' }, [
+            h('div', { className: 'grow' }, [fieldEl('节点名称', title)]),
+            h('button', {
+              type: 'button',
+              className: 'ms-remove',
+              'aria-label': '删除节点',
+              text: '×',
+              onClick: () => {
+                d.milestones = d.milestones.filter((_, j) => j !== i);
+                draftPatch({});
+              },
+            }),
+          ]),
+          fieldEl('目标日期', due),
+          remindChk,
+          timeInp,
+        ]);
+      })
+    ),
+    h('button', {
+      type: 'button',
+      className: 'ms-add',
+      text: '+ 添加里程碑',
+      onClick: () => {
+        if ((d.milestones || []).length >= 20) return toast('单条计划最多 20 个里程碑');
+        d.milestones = [...(d.milestones || []), newMilestoneDraft()];
+        draftPatch({});
+      },
+    }),
+    err.milestones ? h('p', { className: 'err', text: err.milestones }) : null,
+  ]);
+
   return formShell(
     '新建计划',
     [
@@ -2087,6 +2442,7 @@ function renderPlanForm(f) {
       fieldEl('结束日期（可空）', end, err.end),
       remind,
       remindTime,
+      msEditor,
       peoplePicker('执行人', d.assigneeIds || [], (ids) => draftPatch({ assigneeIds: ids }), err.assignees),
       attachBlock(d, 'plan'),
     ],
@@ -2128,6 +2484,19 @@ function renderPlanForm(f) {
         render();
         return;
       }
+      const milestones = normalizeMilestones(d.milestones);
+      for (const m of milestones) {
+        if (m.dueDate && d.start && m.dueDate < d.start) {
+          f.errors.milestones = '里程碑日期不能早于计划开始日';
+          render();
+          return;
+        }
+        if (m.dueDate && d.end && m.dueDate > d.end) {
+          f.errors.milestones = '里程碑日期不能晚于计划结束日';
+          render();
+          return;
+        }
+      }
       const assignees = d.assigneeIds?.length ? d.assigneeIds : [myId()];
       if (!assignees.length) {
         f.errors.assignees = '至少选择一名执行人';
@@ -2147,14 +2516,17 @@ function renderPlanForm(f) {
           endDate: d.end || null,
           reminder: d.remind ? d.remindTime || '20:00' : null,
           executorIds: assignees,
+          milestones,
           archived: false,
           attachmentIds,
         });
         state.form = null;
         state.tab = 'plans';
-        toast('计划已保存');
+        toast(milestones.length ? `计划已保存 · ${milestones.length} 个里程碑` : '计划已保存');
         render();
         maybeSync();
+        const all = await db.allEntities();
+        reminders.reschedule(all).catch(() => {});
       } catch (e) {
         toast(e.message);
       }
@@ -2251,6 +2623,7 @@ async function render() {
   else if (state.screen === 'setup') view = renderSetup();
   else if (state.screen === 'family-login') view = renderFamilyLogin();
   else if (state.screen === 'merge') view = renderMerge();
+  else if (state.screen === 'plan-detail') view = await renderPlanDetail();
   else view = await renderHome();
   root.append(view);
   const focusEl = root.querySelector('.form-screen input, .form-screen textarea, .sheet .menu-item');

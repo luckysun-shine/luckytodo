@@ -413,6 +413,104 @@ button { cursor: pointer; }
 .brand p { margin: 0; color: var(--muted); font-size: 0.95rem; max-width: 28ch; }
 .auth-actions { margin-top: auto; display: grid; gap: var(--space-3); padding-top: var(--space-5); }
 
+.ms-list { display: grid; gap: 10px; margin: 0 0 12px; }
+.ms-row {
+  display: grid; gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--field);
+}
+.ms-row-top { display: flex; align-items: flex-start; gap: 8px; }
+.ms-row-top .grow { min-width: 0; }
+.ms-row .field { margin: 0; }
+.ms-row .field input { min-height: 40px; padding: 8px 12px; }
+.ms-remove {
+  border: 0; background: transparent; color: var(--muted);
+  width: 36px; height: 36px; border-radius: 10px; flex: none;
+  font-size: 1.1rem; line-height: 1;
+}
+.ms-remove:hover { color: var(--miss); background: color-mix(in oklch, var(--miss) 12%, transparent); }
+.ms-add {
+  width: 100%; min-height: 44px;
+  border: 1px dashed var(--line);
+  background: transparent; color: var(--accent-strong);
+  border-radius: var(--radius-md);
+  font-weight: 650;
+}
+.ms-add:hover { background: color-mix(in oklch, var(--accent) 8%, transparent); }
+
+.ms-timeline { display: grid; gap: 0; margin: 8px 0 16px; position: relative; }
+.ms-node {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 12px;
+  position: relative;
+  padding-bottom: 18px;
+}
+.ms-node:last-child { padding-bottom: 0; }
+.ms-rail {
+  display: flex; flex-direction: column; align-items: center;
+  position: relative;
+}
+.ms-dot {
+  width: 16px; height: 16px; border-radius: 50%; flex: none;
+  border: 2px solid var(--line);
+  background: var(--bg-elev);
+  z-index: 1;
+  margin-top: 4px;
+}
+.ms-node.done .ms-dot {
+  background: var(--done);
+  border-color: var(--done);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--done) 25%, transparent);
+}
+.ms-node.due .ms-dot {
+  border-color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 35%, var(--bg-elev));
+}
+.ms-node.overdue:not(.done) .ms-dot {
+  border-color: var(--miss);
+  background: color-mix(in oklch, var(--miss) 30%, var(--bg-elev));
+}
+.ms-rail::after {
+  content: '';
+  flex: 1; width: 2px; margin-top: 4px;
+  background: var(--line);
+  min-height: 12px;
+}
+.ms-node:last-child .ms-rail::after { display: none; }
+.ms-body {
+  min-width: 0;
+  padding: 2px 0 4px;
+}
+.ms-body h3 {
+  margin: 0 0 4px;
+  font-family: var(--font-display);
+  font-size: 1rem; font-weight: 700;
+}
+.ms-body.done h3 { text-decoration: line-through; color: var(--muted); }
+.ms-meta { margin: 0; color: var(--muted); font-size: 0.78rem; }
+.ms-note {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--accent) 8%, var(--field));
+  color: var(--text); font-size: 0.85rem; line-height: 1.4;
+}
+.ms-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ms-actions .btn { min-height: 40px; padding: 0 14px; font-size: 0.88rem; }
+
+.progress-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+  color: var(--accent-strong);
+  font-size: 0.75rem; font-weight: 650;
+}
+
 .tabs {
   position: absolute;
   left: 12px; right: 12px;
