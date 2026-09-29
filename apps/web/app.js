@@ -3,6 +3,7 @@ import * as api from './src/api.js';
 import * as db from './src/db.js';
 import * as reminders from './src/reminders.js';
 import * as native from './src/native.js';
+import * as widget from './src/widgetBridge.js';
 
 const style = document.createElement('style');
 style.textContent = css;
@@ -97,12 +98,16 @@ function h(tag, attrs = {}, children = []) {
 }
 
 async function maybeSync() {
-  if (!api.isFamilyMode() || !state.online) return;
+  if (!api.isFamilyMode() || !state.online) {
+    widget.publishWidgetSnapshot().catch(() => {});
+    return;
+  }
   try {
     await api.syncNow();
     await loadMembers();
     const all = await db.allEntities();
     reminders.reschedule(all).catch(() => {});
+    widget.publishWidgetSnapshot().catch(() => {});
   } catch (e) {
     if (!e.offline) console.warn(e);
   }
@@ -126,6 +131,7 @@ async function afterLogin(session) {
 async function afterLocalLogin() {
   state.screen = 'home';
   await loadMembers();
+  widget.publishWidgetSnapshot().catch(() => {});
   render();
 }
 
@@ -260,17 +266,52 @@ async function boot() {
   applyChrome();
   native.registerServiceWorker();
   await native.initNative().catch(() => {});
+  bindDeepLinks();
   if (!api.isLoggedIn()) {
     state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
     render();
     hideBootSplash();
+    widget.publishWidgetSnapshot().catch(() => {});
     return;
   }
   state.screen = 'home';
   await loadMembers();
+  try {
+    const drafts = await widget.consumeWidgetDrafts();
+    if (drafts?.length) toast(`已从桌面组件同步 ${drafts.length} 条`);
+  } catch {
+    /* ignore */
+  }
   render();
   hideBootSplash();
   maybeSync().then(render);
+  widget.publishWidgetSnapshot().catch(() => {});
+}
+
+function bindDeepLinks() {
+  const apply = (url) => {
+    const info = widget.handleDeepLink(url);
+    if (!info) return;
+    if (info.tab) state.tab = info.tab;
+    if (info.path === 'create' || info.day) {
+      openCreateForm(info.type === 'event' ? 'event' : 'todo');
+      return;
+    }
+    if (info.path === 'item' && info.type === 'plan' && info.id) {
+      openPlanDetail(info.id);
+      return;
+    }
+    state.screen = 'home';
+    render();
+  };
+  document.addEventListener('click', () => {}, { once: true });
+  if (window.Capacitor?.Plugins?.App?.addListener) {
+    window.Capacitor.Plugins.App.addListener('appUrlOpen', (data) => {
+      if (data?.url) apply(data.url);
+    });
+  }
+  // also handle cold start query if present
+  if (location.hash.startsWith('#luckytodo')) apply(location.hash.slice(1));
 }
 
 function hideBootSplash() {
@@ -1451,6 +1492,48 @@ async function renderMeBody() {
 
   appendNodes(
     wrap,
+    (() => {
+      let snap = null;
+      try {
+        snap = JSON.parse(localStorage.getItem('lt_widget_snapshot') || 'null');
+      } catch {
+        snap = null;
+      }
+      const remCount = (snap?.reminders || []).filter((r) => !r.done).length;
+      const markCount = (snap?.markedDays || []).length;
+      const updated = snap?.updatedAt ? fmt(snap.updatedAt) : '尚未生成';
+      return [
+        h('div', { className: 'section-label', text: '主屏组件' }),
+        h('div', { className: 'card' }, [
+          h('h3', { text: '今日提醒 / 家庭日历' }),
+          h('p', {
+            text: snap
+              ? `今日提醒 ${remCount} 条 · 日历落点 ${markCount} 天`
+              : '打开 App 并登录后会写入组件快照',
+          }),
+          h('p', { className: 'muted', text: `最近快照：${updated}` }),
+          h('p', {
+            className: 'muted',
+            style: 'margin-top:8px',
+            text: '长按主屏 → 添加组件 → LuckyTodo。需 iOS 17+ 与 App Group 签名。',
+          }),
+          h('button', {
+            className: 'btn secondary block',
+            style: 'margin-top:12px',
+            text: '刷新组件数据',
+            onClick: async () => {
+              try {
+                await widget.publishWidgetSnapshot();
+                toast('已刷新主屏组件快照');
+                render();
+              } catch (e) {
+                toast(e.message || '刷新失败');
+              }
+            },
+          }),
+        ]),
+      ];
+    })(),
     h('div', { className: 'section-label', text: '外观' }),
     h('div', { className: 'seg', style: 'margin-bottom:12px' }, [
       ['night', '夜航'],
@@ -1547,6 +1630,7 @@ async function renderMeBody() {
           }
         }
         api.logout();
+        widget.publishWidgetSnapshot().catch(() => {});
         state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
         render();
       },
@@ -1574,6 +1658,7 @@ async function renderMeBody() {
             state.tab = 'me';
             state.screen = api.isLoggedIn() ? 'home' : 'local-login';
             toast('已改回本机使用');
+            widget.publishWidgetSnapshot().catch(() => {});
             render();
           },
         })
