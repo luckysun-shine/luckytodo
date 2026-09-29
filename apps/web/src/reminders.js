@@ -1,10 +1,8 @@
-/** Schedule local Web Notifications for due todos / plan / milestone reminders. */
+/** Schedule reminders: Capacitor LocalNotifications when native, else Web Notification. */
+import * as native from './native.js';
+
 export async function ensurePermission() {
-  if (!('Notification' in window)) return false;
-  if (Notification.permission === 'granted') return true;
-  if (Notification.permission === 'denied') return false;
-  const r = await Notification.requestPermission();
-  return r === 'granted';
+  return native.requestNotifyPermission();
 }
 
 function milestoneRemindAt(ms) {
@@ -68,7 +66,17 @@ export async function reschedule(entities) {
   }
   upcoming.sort((a, b) => a.at - b.at);
   const slice = upcoming.filter((x) => x.at > now).slice(0, 60);
+  const useNative = native.isNative();
   for (const item of slice) {
+    if (useNative) {
+      await native.scheduleLocal({
+        id: item.id,
+        title: item.title,
+        body: item.body,
+        at: item.at,
+      });
+      continue;
+    }
     const delay = item.at - now;
     if (delay > 2147483647) continue;
     setTimeout(() => {

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="LuckyTodo">
   <meta name="application-name" content="LuckyTodo">
   <meta name="theme-color" content="#0a1628">
@@ -20,8 +21,38 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="manifest" href="./public/manifest.webmanifest">
+  <style>
+    html, body { margin: 0; height: 100%; background: #0a1628; }
+    #boot-splash {
+      position: fixed; inset: 0; z-index: 9999;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 18px;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% 20%, rgba(61, 214, 198, 0.16), transparent 55%),
+        #0a1628;
+      color: #e8f4f2;
+      font-family: "Outfit", "Noto Sans SC", sans-serif;
+      transition: opacity .35s cubic-bezier(0.16, 1, 0.3, 1), visibility .35s;
+    }
+    #boot-splash.hide { opacity: 0; visibility: hidden; pointer-events: none; }
+    #boot-splash img {
+      width: 96px; height: 96px; border-radius: 24px;
+      box-shadow: 0 16px 40px rgba(45, 180, 200, 0.28);
+    }
+    #boot-splash .name {
+      font-weight: 800; font-size: 1.35rem; letter-spacing: -0.03em;
+    }
+    #boot-splash .sub {
+      margin: 0; opacity: 0.65; font-size: 0.85rem; font-weight: 500;
+    }
+  </style>
 </head>
 <body>
+  <div id="boot-splash" aria-live="polite">
+    <img src="./public/logo.png" alt="" width="96" height="96">
+    <div class="name">LuckyTodo</div>
+    <p class="sub">家庭待办 · 正在启动</p>
+  </div>
   <div id="app" data-theme="night" data-font="standard"></div>
   <script type="module" src="./app.js"></script>
 </body>

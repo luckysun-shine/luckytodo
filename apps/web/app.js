@@ -2,6 +2,7 @@ import { css } from './src/styles.js';
 import * as api from './src/api.js';
 import * as db from './src/db.js';
 import * as reminders from './src/reminders.js';
+import * as native from './src/native.js';
 
 const style = document.createElement('style');
 style.textContent = css;
@@ -257,15 +258,28 @@ async function loadMembers() {
 
 async function boot() {
   applyChrome();
+  native.registerServiceWorker();
+  await native.initNative().catch(() => {});
   if (!api.isLoggedIn()) {
     state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
     render();
+    hideBootSplash();
     return;
   }
   state.screen = 'home';
   await loadMembers();
   render();
+  hideBootSplash();
   maybeSync().then(render);
+}
+
+function hideBootSplash() {
+  const el = document.getElementById('boot-splash');
+  if (!el) return;
+  requestAnimationFrame(() => {
+    el.classList.add('hide');
+    setTimeout(() => el.remove(), 400);
+  });
 }
 
 const ICONS_EYE = {
@@ -797,6 +811,7 @@ async function renderTodayBody() {
             const completions = { ...(t.payload.completions || {}) };
             completions[me?.id || 'guest'] = done ? 'open' : 'done';
             await api.saveLocalEntity('todo', { ...t.payload, completions }, { id: t.id });
+            if (!done) native.lightTap();
             toast(done ? '已恢复为未完成' : '已完成');
             render();
             maybeSync();
