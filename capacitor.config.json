@@ -1,0 +1,12 @@
+{
+  "appId": "family.luckytodo.app",
+  "appName": "LuckyTodo",
+  "webDir": "apps/web",
+  "server": {
+    "androidScheme": "https"
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "preferredContentMode": "mobile"
+  }
+}

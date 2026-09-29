@@ -1,0 +1,10 @@
+node_modules/
+apps/api/data/
+*.sqlite
+*.sqlite-*
+.DS_Store
+dist/
+ios/
+android/
+.idea/
+.vscode/

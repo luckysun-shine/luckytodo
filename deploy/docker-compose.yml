@@ -1,0 +1,15 @@
+services:
+  luckytodo-api:
+    build: ../apps/api
+    container_name: luckytodo-api
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      PORT: "8787"
+      LUCKYTODO_DATA: /data
+    volumes:
+      - luckytodo_data:/data
+
+volumes:
+  luckytodo_data:

@@ -1,0 +1,14 @@
+{
+  "name": "luckytodo",
+  "version": "0.3.0",
+  "private": true,
+  "description": "家庭代办 LuckyTodo",
+  "scripts": {
+    "api": "node apps/api/src/index.js",
+    "test:api": "node --test apps/api/test/*.test.js",
+    "start": "LUCKYTODO_DATA=./apps/api/data node apps/api/src/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
