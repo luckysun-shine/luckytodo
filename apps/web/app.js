@@ -43,6 +43,13 @@ function applyChrome() {
   root.dataset.font = state.font;
 }
 
+function appendNodes(parent, ...nodes) {
+  for (const n of nodes.flat()) {
+    if (n == null || n === false) continue;
+    parent.append(n);
+  }
+}
+
 function h(tag, attrs = {}, children = []) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -346,7 +353,8 @@ async function renderTodayBody() {
   const me = api.getMember();
   const wrap = h('div');
 
-  wrap.append(
+  appendNodes(
+    wrap,
     h('div', { className: 'h2', text: '今日待办' }),
     todos.length
       ? null
@@ -355,7 +363,8 @@ async function renderTodayBody() {
 
   for (const t of todos) {
     const done = (t.payload.completions || {})[me?.id || 'guest'] === 'done';
-    wrap.append(
+    appendNodes(
+      wrap,
       h('div', { className: 'card row' }, [
         h('button', {
           className: `check ${done ? 'on' : ''}`,
@@ -381,12 +390,13 @@ async function renderTodayBody() {
     );
   }
 
-  wrap.append(h('div', { className: 'h2', text: '今日计划' }));
+  appendNodes(wrap, h('div', { className: 'h2', text: '今日计划' }));
   for (const p of plans.filter((x) => !x.payload.archived)) {
     const execs = p.payload.executorIds || [];
     const mine = !me || execs.includes(me.id) || execs.length === 0;
     if (me?.role === 'child' && !execs.includes(me.id)) continue;
-    wrap.append(
+    appendNodes(
+      wrap,
       h('div', { className: 'card' }, [
         h('h3', { text: p.payload.title }),
         h('p', { text: `${(execs.length || 1)} 人执行 · ${p.payload.reminder || '无提醒'}` }),
@@ -414,9 +424,10 @@ async function renderTodayBody() {
     );
   }
 
-  wrap.append(h('div', { className: 'h2', text: '便签' }));
+  appendNodes(wrap, h('div', { className: 'h2', text: '便签' }));
   for (const n of notes.slice(0, 5)) {
-    wrap.append(
+    appendNodes(
+      wrap,
       h('div', { className: 'card' }, [
         h('h3', { text: n.payload.title }),
         h('p', { text: n.payload.body || visibilityLabel(n.payload.visibility) }),
