@@ -1,0 +1,14 @@
+node_modules/
+apps/api/data/
+*.sqlite
+*.sqlite-*
+.DS_Store
+dist/
+android/
+.idea/
+.vscode/
+ios/App/Pods/
+ios/App/App/public/
+ios/DerivedData/
+*.xcuserstate
+

@@ -1,0 +1,2182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>LuckyTodo 原型 v003</title>
+  <style>
+    /* Sweatcoin 参考约束 → LuckyTodo 夜间皮肤：深紫黑底、抬升卡片、玻璃底栏、大数字、柔光，不搬品牌与计步。 */
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      gap: 12px;
+      padding: 24px 16px;
+      background: oklch(0.18 0.03 290);
+      color: oklch(0.94 0.012 300);
+      font-family: "SF Pro Rounded", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Noto Sans CJK SC", system-ui, sans-serif;
+      font-size: 16px;
+      line-height: 1.45;
+    }
+    .stage-note { margin: 0; font-size: 13px; letter-spacing: 0.01em; color: oklch(0.78 0.03 290); }
+    #device {
+      width: min(400px, 100%);
+      height: min(844px, calc(100dvh - 72px));
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-radius: 32px;
+      border: 1px solid color-mix(in oklch, white 10%, transparent);
+      background: var(--bg);
+      color: var(--text);
+      touch-action: manipulation;
+      box-shadow: 0 24px 80px oklch(0.12 0.04 290 / 0.55);
+    }
+    #device::before {
+      content: "";
+      position: absolute;
+      inset: -20% -10% auto -10%;
+      height: 52%;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse at 30% 20%, color-mix(in oklch, var(--accent) 34%, transparent), transparent 55%),
+        radial-gradient(ellipse at 78% 8%, color-mix(in oklch, var(--accent-2) 28%, transparent), transparent 50%);
+      opacity: 0.9;
+      z-index: 0;
+    }
+    #app { position: relative; z-index: 1; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    #device[data-theme="night"] {
+      --bg: oklch(0.17 0.035 290);
+      --bg-elev: oklch(0.23 0.04 292);
+      --card: color-mix(in oklch, oklch(0.28 0.045 295) 88%, transparent);
+      --text: oklch(0.98 0.01 300);
+      --secondary: oklch(0.74 0.03 295);
+      --accent: oklch(0.62 0.22 292);
+      --accent-2: oklch(0.68 0.2 330);
+      --on-accent: oklch(0.99 0.01 300);
+      --done: oklch(0.8 0.16 163);
+      --miss: oklch(0.72 0.18 18);
+      --coral: oklch(0.78 0.14 10);
+      --line: color-mix(in oklch, white 10%, transparent);
+      --field: oklch(0.25 0.04 295);
+      --glow: color-mix(in oklch, var(--accent) 45%, transparent);
+      color-scheme: dark;
+    }
+    #device[data-theme="day"] {
+      --bg: oklch(0.97 0.01 280);
+      --bg-elev: oklch(0.995 0.005 280);
+      --card: oklch(1 0.004 280);
+      --text: oklch(0.22 0.03 290);
+      --secondary: oklch(0.48 0.03 280);
+      --accent: oklch(0.52 0.2 292);
+      --accent-2: oklch(0.58 0.18 330);
+      --on-accent: oklch(0.99 0.01 300);
+      --done: oklch(0.5 0.13 162);
+      --miss: oklch(0.52 0.18 27);
+      --coral: oklch(0.6 0.16 20);
+      --line: color-mix(in oklch, var(--text) 12%, transparent);
+      --field: oklch(0.99 0.005 280);
+      --glow: color-mix(in oklch, var(--accent) 25%, transparent);
+      color-scheme: light;
+    }
+    #device[data-theme="paper"] {
+      --bg: oklch(0.955 0.02 88);
+      --bg-elev: oklch(0.985 0.012 88);
+      --card: oklch(0.99 0.01 88);
+      --text: oklch(0.27 0.03 75);
+      --secondary: oklch(0.45 0.04 70);
+      --accent: oklch(0.55 0.13 48);
+      --accent-2: oklch(0.62 0.12 30);
+      --on-accent: oklch(0.985 0.01 88);
+      --done: oklch(0.46 0.1 152);
+      --miss: oklch(0.48 0.15 30);
+      --coral: oklch(0.58 0.14 35);
+      --line: color-mix(in oklch, var(--text) 14%, transparent);
+      --field: oklch(0.99 0.01 88);
+      --glow: color-mix(in oklch, var(--accent) 22%, transparent);
+      color-scheme: light;
+    }
+    .screen { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 56px;
+      padding: calc(12px + env(safe-area-inset-top)) 16px 8px;
+    }
+    .top h1 { flex: 1; margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-wrap: balance; }
+    #device[data-font="large"] .top h1,
+    #device[data-font="large"] .title { font-size: 24px; }
+    .scroller { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 4px 16px 24px; }
+    .scroller.pad-tab { padding-bottom: 132px; }
+    .scroller.pad-bar { padding-bottom: 108px; }
+    .searchpad { padding: 0 16px 8px; }
+    h1, h2, p { text-wrap: pretty; }
+    h2 {
+      margin: 20px 4px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--secondary);
+    }
+    .meta { color: var(--secondary); font-size: 13px; }
+    #device[data-font="large"] .meta { font-size: 16px; }
+    .title { display: block; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
+    .datehead { display: flex; align-items: center; gap: 14px; padding: 4px 0 8px; }
+    .daynum {
+      margin: 0;
+      font-size: 56px;
+      line-height: 0.9;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      font-variant-numeric: tabular-nums;
+      background: linear-gradient(135deg, var(--text), color-mix(in oklch, var(--accent-2) 55%, var(--text)));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    #device[data-theme="day"] .daynum,
+    #device[data-theme="paper"] .daynum {
+      background: none;
+      color: var(--text);
+      -webkit-background-clip: unset;
+      background-clip: unset;
+    }
+    .grow { flex: 1; }
+    .avatar, .iconbtn, .tabs button, .btn, .row, .check, .day, .seg button, .tile {
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+    }
+    .iconbtn, .avatar {
+      width: 44px; height: 44px; flex: 0 0 44px;
+      display: grid; place-items: center;
+      border: 0; border-radius: 14px;
+      background: color-mix(in oklch, var(--card) 80%, transparent);
+      border: 1px solid var(--line);
+      backdrop-filter: blur(12px);
+    }
+    .avatar {
+      border-radius: 50%;
+      background: linear-gradient(145deg, color-mix(in oklch, var(--accent) 55%, var(--bg-elev)), color-mix(in oklch, var(--accent-2) 45%, var(--bg-elev)));
+      color: var(--on-accent);
+      border: 0;
+      font-weight: 700;
+      box-shadow: 0 0 0 2px color-mix(in oklch, var(--bg) 70%, transparent), 0 0 18px var(--glow);
+    }
+    .ico { display: block; }
+    .hero {
+      display: grid;
+      grid-template-columns: 104px 1fr;
+      gap: 14px;
+      align-items: center;
+      margin: 4px 0 14px;
+      padding: 16px;
+      border-radius: 24px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      box-shadow: 0 12px 32px oklch(0.1 0.03 290 / 0.28);
+      backdrop-filter: blur(18px);
+    }
+    .ring {
+      width: 104px; height: 104px; position: relative;
+      display: grid; place-items: center;
+    }
+    .ring svg { width: 104px; height: 104px; transform: rotate(-90deg); }
+    .ring .track { fill: none; stroke: color-mix(in oklch, var(--text) 10%, transparent); stroke-width: 9; }
+    .ring .prog {
+      fill: none;
+      stroke: url(#ltGrad);
+      stroke-width: 9;
+      stroke-linecap: round;
+      filter: drop-shadow(0 0 8px var(--glow));
+      transition: stroke-dashoffset 420ms cubic-bezier(0.23, 1, 0.32, 1);
+    }
+    .ring .center {
+      position: absolute; inset: 0;
+      display: grid; place-items: center; text-align: center;
+    }
+    .ring .center strong {
+      display: block;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums;
+      color: var(--coral);
+      line-height: 1;
+    }
+    .ring .center span { font-size: 11px; color: var(--secondary); letter-spacing: 0.04em; }
+    .hero-copy h2 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+      text-transform: none;
+      color: var(--text);
+      font-weight: 700;
+    }
+    .hero-copy p { margin: 0; color: var(--secondary); font-size: 13px; }
+    .tabs {
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      bottom: calc(8px + env(safe-area-inset-bottom));
+      z-index: 6;
+      display: flex;
+      gap: 4px;
+      margin: 0;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: color-mix(in oklch, var(--bg-elev) 78%, transparent);
+      backdrop-filter: blur(22px);
+      box-shadow: 0 10px 30px oklch(0.12 0.03 290 / 0.35);
+    }
+    .tabs button {
+      flex: 1;
+      min-height: 52px;
+      border: 0;
+      border-radius: 16px;
+      background: transparent;
+      color: var(--secondary);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      font-size: 11px;
+      font-weight: 650;
+      transition: background-color 160ms cubic-bezier(0.23, 1, 0.32, 1), color 160ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 160ms cubic-bezier(0.23, 1, 0.32, 1);
+    }
+    #device[data-font="large"] .tabs button { font-size: 13px; }
+    .tabs button[aria-current="page"] {
+      color: var(--on-accent);
+      background: linear-gradient(145deg, var(--accent), var(--accent-2));
+      box-shadow: 0 8px 20px var(--glow);
+    }
+    .search { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .search input { flex: 1; }
+    input, textarea, select {
+      font: inherit;
+      font-size: 16px;
+      color: var(--text);
+      background: var(--field);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px 16px;
+      width: 100%;
+      transition: border-color 160ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 160ms cubic-bezier(0.23, 1, 0.32, 1);
+    }
+    input:focus-visible, textarea:focus-visible, select:focus-visible {
+      border-color: color-mix(in oklch, var(--accent) 70%, var(--line));
+      box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);
+    }
+    textarea { min-height: 96px; resize: vertical; }
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .field label { font-size: 13px; color: var(--secondary); font-weight: 600; }
+    #device[data-font="large"] .field label { font-size: 16px; }
+    .err { margin: 0; color: var(--miss); font-size: 13px; }
+    .row {
+      width: 100%;
+      min-height: 64px;
+      padding: 14px 16px;
+      margin: 0 0 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      text-align: left;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--card);
+      box-shadow: 0 8px 20px oklch(0.12 0.03 290 / 0.18);
+      backdrop-filter: blur(14px);
+      transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1), border-color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+    }
+    @media (hover: hover) and (pointer: fine) {
+      .row:hover { border-color: color-mix(in oklch, var(--accent) 45%, var(--line)); }
+    }
+    .row:active { transform: scale(0.985); }
+    .row .line { width: 100%; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .pill {
+      flex: 0 0 auto;
+      border: 1px solid color-mix(in oklch, currentColor 35%, transparent);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 650;
+      color: var(--secondary);
+      background: color-mix(in oklch, var(--text) 5%, transparent);
+    }
+    #device[data-font="large"] .pill { font-size: 14px; }
+    .pill.done { color: var(--done); background: color-mix(in oklch, var(--done) 12%, transparent); }
+    .pill.miss, .pill.late { color: var(--miss); background: color-mix(in oklch, var(--miss) 12%, transparent); }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 14px 16px;
+      margin: 8px 0 12px;
+      box-shadow: 0 10px 28px oklch(0.12 0.03 290 / 0.2);
+      backdrop-filter: blur(14px);
+    }
+    .person { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .person:last-child { border-bottom: 0; }
+    .btn {
+      min-height: 52px;
+      padding: 14px 18px;
+      border-radius: 999px;
+      border: 0;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: var(--on-accent);
+      font-weight: 700;
+      text-align: center;
+      box-shadow: 0 10px 28px var(--glow);
+      transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1), filter 140ms cubic-bezier(0.23, 1, 0.32, 1);
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn.secondary {
+      background: color-mix(in oklch, var(--text) 6%, transparent);
+      color: var(--text);
+      border: 1px solid var(--line);
+      box-shadow: none;
+    }
+    .btn.danger {
+      background: color-mix(in oklch, var(--miss) 12%, transparent);
+      color: var(--miss);
+      border: 1px solid color-mix(in oklch, var(--miss) 40%, var(--line));
+      box-shadow: none;
+    }
+    .btn:disabled { opacity: 0.5; }
+    .col { display: flex; flex-direction: column; gap: 10px; }
+    .rowbtns { display: flex; gap: 10px; }
+    .rowbtns .btn { flex: 1; }
+    .fab {
+      position: absolute;
+      right: 18px;
+      bottom: calc(92px + env(safe-area-inset-bottom));
+      width: 60px; height: 60px;
+      border: 0; border-radius: 50%;
+      background: linear-gradient(145deg, var(--accent), var(--accent-2));
+      color: var(--on-accent);
+      display: grid; place-items: center;
+      z-index: 5;
+      box-shadow: 0 14px 36px var(--glow);
+      transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+    }
+    .fab:active { transform: scale(1.06); }
+    .banner {
+      display: flex; gap: 8px; align-items: center;
+      padding: 12px 14px; margin: 0 0 12px;
+      border: 1px solid var(--line); border-radius: 18px; background: var(--card);
+      backdrop-filter: blur(12px);
+    }
+    .banner p { margin: 0; flex: 1; }
+    .empty {
+      padding: 36px 16px;
+      display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
+      border-radius: 24px;
+      background: var(--card);
+      border: 1px solid var(--line);
+    }
+    .empty h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; text-transform: none; color: var(--text); }
+    .skel {
+      height: 64px; border-radius: 18px;
+      background: linear-gradient(90deg, var(--field), color-mix(in oklch, var(--text) 10%, var(--field)), var(--field));
+      background-size: 200% 100%;
+      margin: 10px 0;
+    }
+    .skel.w2 { width: 70%; height: 18px; }
+    .calhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .week, .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+    .week span { text-align: center; color: var(--secondary); font-size: 12px; padding: 4px 0; font-weight: 650; }
+    .day {
+      min-height: 44px;
+      border: 0; border-radius: 14px; background: transparent;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+      font-weight: 650;
+    }
+    .day[aria-pressed="true"] {
+      background: linear-gradient(145deg, var(--accent), var(--accent-2));
+      color: var(--on-accent);
+      box-shadow: 0 8px 18px var(--glow);
+    }
+    .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+    .day[aria-pressed="true"] .dot { background: var(--on-accent); }
+    .seg { display: flex; gap: 8px; margin-bottom: 10px; padding: 4px; border-radius: 18px; background: color-mix(in oklch, var(--text) 5%, transparent); border: 1px solid var(--line); }
+    .seg button {
+      flex: 1; min-height: 44px; border-radius: 14px;
+      border: 0; background: transparent; font-weight: 650; color: var(--secondary);
+    }
+    .seg button[aria-pressed="true"] {
+      background: linear-gradient(145deg, var(--accent), var(--accent-2));
+      color: var(--on-accent);
+      box-shadow: 0 6px 16px var(--glow);
+    }
+    .checks { display: flex; flex-direction: column; gap: 8px; }
+    .check {
+      min-height: 52px; padding: 12px 14px;
+      display: flex; justify-content: space-between; gap: 8px; align-items: center;
+      border-radius: 16px; border: 1px solid var(--line); background: var(--card); text-align: left;
+    }
+    .check[aria-pressed="true"] {
+      border-color: color-mix(in oklch, var(--accent) 55%, var(--line));
+      background: color-mix(in oklch, var(--accent) 16%, transparent);
+      box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 25%, transparent);
+    }
+    .days { display: flex; flex-wrap: wrap; gap: 8px; }
+    .days button { min-width: 44px; min-height: 44px; border-radius: 14px; border: 1px solid var(--line); background: var(--card); font-weight: 650; }
+    .days button[aria-pressed="true"] { background: linear-gradient(145deg, var(--accent), var(--accent-2)); color: var(--on-accent); border-color: transparent; }
+    .backdrop {
+      position: absolute; inset: 0; z-index: 20;
+      background: oklch(0.12 0.03 290 / 0.62);
+      backdrop-filter: blur(8px);
+      display: flex; align-items: flex-end;
+    }
+    .backdrop.center { align-items: center; justify-content: center; padding: 20px; z-index: 30; }
+    .sheet, .dialog {
+      background: var(--bg-elev); color: var(--text);
+      width: 100%; max-height: 82%; overflow: auto;
+      border-radius: 28px 28px 0 0;
+      padding: 10px 16px calc(18px + env(safe-area-inset-bottom));
+      overscroll-behavior: contain;
+      border: 1px solid var(--line);
+      box-shadow: 0 -20px 60px oklch(0.1 0.04 290 / 0.45);
+    }
+    .sheet::before, .dialog .handle {
+      content: "";
+      display: block;
+      width: 40px; height: 4px;
+      margin: 4px auto 14px;
+      border-radius: 999px;
+      background: color-mix(in oklch, var(--text) 28%, transparent);
+    }
+    .dialog { width: min(320px, 100%); border-radius: 24px; }
+    .dialog::before { display: none; }
+    .toast {
+      position: absolute; left: 16px; right: 16px; top: calc(64px + env(safe-area-inset-top));
+      z-index: 40; pointer-events: none;
+      background: color-mix(in oklch, var(--bg-elev) 88%, transparent);
+      color: var(--text);
+      border: 1px solid var(--line); border-radius: 16px;
+      padding: 12px 14px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 12px 28px oklch(0.12 0.03 290 / 0.35);
+    }
+    .dock {
+      position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
+      padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+      background: color-mix(in oklch, var(--bg) 78%, transparent);
+      border-top: 1px solid var(--line);
+      backdrop-filter: blur(18px);
+    }
+    .choice { display: flex; gap: 8px; align-items: center; min-height: 44px; }
+    .sr {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    @media (max-width: 480px) {
+      body { padding: 0; display: block; background: var(--bg); }
+      .stage-note { display: none; }
+      #device { width: 100%; height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * { animation: none !important; transition: none !important; }
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .skel { animation: shimmer 1.2s ease-in-out infinite; }
+    }
+    @keyframes shimmer {
+      0% { background-position: 100% 0; }
+      100% { background-position: -100% 0; }
+    }
+
+    .vis-grid { display: grid; gap: 10px; }
+    .vis-card {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 44px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      text-align: left;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+      transition: border-color 140ms cubic-bezier(0.23, 1, 0.32, 1), box-shadow 140ms cubic-bezier(0.23, 1, 0.32, 1), transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+    }
+    .vis-card:active { transform: scale(0.985); }
+    .vis-card[aria-pressed="true"] {
+      border-color: color-mix(in oklch, var(--accent) 55%, var(--line));
+      box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 28%, transparent), 0 10px 24px var(--glow);
+      background: color-mix(in oklch, var(--accent) 14%, var(--card));
+    }
+    .vis-ico {
+      width: 44px; height: 44px; border-radius: 14px;
+      display: grid; place-items: center;
+      background: color-mix(in oklch, var(--accent) 18%, transparent);
+      color: var(--accent);
+    }
+    .vis-card[aria-pressed="true"] .vis-ico {
+      background: linear-gradient(145deg, var(--accent), var(--accent-2));
+      color: var(--on-accent);
+    }
+    .vis-card strong { display: block; font-size: 15px; font-weight: 700; }
+    .vis-card span { display: block; font-size: 12px; color: var(--secondary); margin-top: 2px; }
+    .vis-check {
+      width: 22px; height: 22px; border-radius: 50%;
+      border: 1.5px solid var(--line);
+      display: grid; place-items: center;
+      color: transparent;
+    }
+    .vis-card[aria-pressed="true"] .vis-check {
+      border-color: transparent;
+      background: linear-gradient(145deg, var(--accent), var(--accent-2));
+      color: var(--on-accent);
+    }
+    .member-chip {
+      display: inline-flex; align-items: center; gap: 8px;
+      min-height: 36px; padding: 6px 12px 6px 6px;
+      border-radius: 999px; border: 1px solid var(--line);
+      background: color-mix(in oklch, var(--text) 5%, transparent);
+      font-size: 13px; font-weight: 650;
+    }
+    .member-chip i {
+      width: 24px; height: 24px; border-radius: 50%;
+      display: grid; place-items: center; font-style: normal; font-size: 12px; font-weight: 700;
+      background: linear-gradient(145deg, var(--accent), var(--accent-2)); color: var(--on-accent);
+    }
+    .profile-hero {
+      display: grid; grid-template-columns: 72px 1fr; gap: 14px; align-items: center;
+      padding: 18px; margin: 4px 0 14px; border-radius: 24px;
+      background: var(--card); border: 1px solid var(--line);
+      box-shadow: 0 12px 32px oklch(0.1 0.03 290 / 0.25);
+    }
+    .profile-avatar {
+      width: 72px; height: 72px; border-radius: 24px;
+      display: grid; place-items: center;
+      font-size: 28px; font-weight: 800;
+      background: linear-gradient(145deg, var(--accent), var(--accent-2));
+      color: var(--on-accent);
+      box-shadow: 0 10px 24px var(--glow);
+    }
+    .profile-hero h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; text-transform: none; color: var(--text); }
+    .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+    .stat {
+      padding: 14px 10px; border-radius: 18px; text-align: center;
+      background: var(--card); border: 1px solid var(--line);
+    }
+    .stat strong { display: block; font-size: 22px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--coral); }
+    .stat span { display: block; margin-top: 4px; font-size: 11px; color: var(--secondary); letter-spacing: 0.04em; }
+    .menu-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+    .menu-item {
+      width: 100%; min-height: 56px; padding: 12px 14px;
+      display: grid; grid-template-columns: 40px 1fr auto; gap: 12px; align-items: center;
+      text-align: left; border-radius: 18px; border: 1px solid var(--line);
+      background: var(--card); color: inherit; font: inherit; cursor: pointer;
+    }
+    .menu-item .mi {
+      width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+      background: color-mix(in oklch, var(--accent) 16%, transparent); color: var(--accent);
+    }
+    .menu-item strong { display: block; font-size: 15px; font-weight: 700; }
+    .menu-item span { display: block; font-size: 12px; color: var(--secondary); }
+    .menu-item .chev { color: var(--secondary); opacity: 0.7; }
+    .theme-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+    .theme-swatch {
+      min-height: 76px; border-radius: 16px; border: 1px solid var(--line);
+      padding: 10px; text-align: left; cursor: pointer; color: inherit; font: inherit;
+      display: flex; flex-direction: column; justify-content: space-between;
+    }
+    .theme-swatch[aria-pressed="true"] {
+      border-color: color-mix(in oklch, var(--accent) 60%, var(--line));
+      box-shadow: 0 0 0 1px color-mix(in oklch, var(--accent) 30%, transparent), 0 8px 20px var(--glow);
+    }
+    .theme-swatch .dotrow { display: flex; gap: 4px; }
+    .theme-swatch .dotrow i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+    .theme-swatch strong { font-size: 12px; font-weight: 700; }
+    .insight-hero {
+      padding: 18px; border-radius: 24px; margin-bottom: 12px;
+      background:
+        radial-gradient(ellipse at 85% 0%, color-mix(in oklch, var(--accent-2) 35%, transparent), transparent 50%),
+        radial-gradient(ellipse at 10% 100%, color-mix(in oklch, var(--accent) 28%, transparent), transparent 45%),
+        var(--card);
+      border: 1px solid var(--line);
+    }
+    .insight-hero .eyebrow {
+      margin: 0 0 8px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--secondary); font-weight: 700;
+    }
+    .insight-hero h2 {
+      margin: 0 0 8px; font-size: 22px; letter-spacing: -0.02em; text-transform: none; color: var(--text);
+    }
+    .insight-card {
+      padding: 16px; border-radius: 20px; margin-bottom: 10px;
+      background: var(--card); border: 1px solid var(--line);
+    }
+    .insight-card .tag {
+      display: inline-flex; align-items: center; gap: 6px;
+      min-height: 26px; padding: 2px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+      background: color-mix(in oklch, var(--accent) 16%, transparent); color: var(--accent);
+      margin-bottom: 8px;
+    }
+    .insight-card h3 { margin: 0 0 6px; font-size: 16px; font-weight: 700; }
+    .insight-card p { margin: 0; color: var(--secondary); font-size: 13px; }
+    .bar-list { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+    .bar-row { display: grid; grid-template-columns: 56px 1fr 40px; gap: 8px; align-items: center; }
+    .bar-row span { font-size: 12px; color: var(--secondary); }
+    .bar-row strong { font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+    .bar-track { height: 8px; border-radius: 999px; background: color-mix(in oklch, var(--text) 8%, transparent); overflow: hidden; }
+    .bar-fill {
+      height: 100%; border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      box-shadow: 0 0 12px var(--glow);
+    }
+    .tabs { gap: 2px; padding: 6px; }
+    .tabs button { min-height: 48px; font-size: 10px; gap: 1px; }
+    #device[data-font="large"] .tabs button { font-size: 12px; }
+    .fab { bottom: calc(96px + env(safe-area-inset-bottom)); }
+    .scroller.pad-tab { padding-bottom: 140px; }
+  </style>
+</head>
+<body>
+  <p class="stage-note">LuckyTodo 原型 v002 · 可见性 / 个人中心 / AI 洞察 · 示例数据只保存在这台浏览器</p>
+  <div id="device" data-theme="night" data-font="standard">
+    <div id="app"></div>
+    <p id="live" class="sr" aria-live="polite"></p>
+  </div>
+  <script>
+'use strict';
+const KEY = 'luckytodo-proto-v003';
+const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
+let state;
+let focusModal = false;
+let toastTimer = 0;
+let pull = null;
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function pad(n) { return String(n).padStart(2, '0'); }
+function todayIso() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+function addIso(iso, n) {
+  const d = new Date(iso + 'T12:00:00+08:00');
+  d.setUTCDate(d.getUTCDate() + n);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
+function weekday(iso) {
+  const name = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', weekday: 'short' }).format(new Date(iso + 'T12:00:00+08:00'));
+  return { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[name];
+}
+function weekdayZh(iso) {
+  return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', weekday: 'long' }).format(new Date(iso + 'T12:00:00+08:00'));
+}
+function at(iso, hh, mm) { return iso + 'T' + pad(hh) + ':' + pad(mm) + ':00+08:00'; }
+function shDate(value) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(value));
+}
+function shTime(value) {
+  return new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(value));
+}
+function toLocal(value) { return value ? shDate(value) + 'T' + shTime(value) : ''; }
+function fromLocal(value) { return value ? value.slice(0, 16) + ':00+08:00' : ''; }
+function uid(prefix) { return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function userById(id) { return state.users.find((u) => u.id === id); }
+function me() { return userById(state.sessionUserId); }
+function roleName(role) { return { admin: '管理员', parent: '家长', adult: '成人', child: '儿童' }[role] || role; }
+function statusName(status) { return { pending: '待执行', done: '已完成', missed: '缺卡', future: '未开始', open: '未完成' }[status] || status; }
+function activeUsers() { return state.users.filter((u) => !u.disabled); }
+function stackTop() { return state.stack.length ? state.stack[state.stack.length - 1] : null; }
+
+function nextWeekday(iso, target) {
+  let d = iso;
+  for (let i = 0; i < 7; i += 1) {
+    if (weekday(d) === target) return d;
+    d = addIso(d, 1);
+  }
+  return iso;
+}
+
+function seed() {
+  const today = todayIso();
+  const yesterday = addIso(today, -1);
+  const tomorrow = addIso(today, 1);
+  const friday = nextWeekday(today, 5);
+  return {
+    route: 'connect',
+    tab: 'today',
+    stack: [],
+    serverUrl: '',
+    connectStatus: 'idle',
+    connectError: '',
+    householdReady: true,
+    familyName: '林家',
+    sessionUserId: null,
+    users: [
+      { id: 'linchen', name: '林晨', username: 'linchen', password: 'family1', role: 'admin', disabled: false },
+      { id: 'zhouning', name: '周宁', username: 'zhouning', password: 'family1', role: 'parent', disabled: false },
+      { id: 'linxiulan', name: '林秀兰', username: 'linxiulan', password: 'family1', role: 'adult', disabled: false },
+      { id: 'xiaoman', name: '林小满', username: 'xiaoman', password: 'family1', role: 'child', disabled: false }
+    ],
+    notes: [
+      { id: 'n1', title: '报销材料在书房抽屉', body: '发票在蓝色文件夹。', authorId: 'linchen', visibility: 'private', memberIds: [], pinned: false, linkedTodoId: null, updatedAt: at(today, 9, 10) },
+      { id: 'n2', title: '周六买水果', body: '西瓜和葡萄。', authorId: 'linchen', visibility: 'specified', memberIds: ['zhouning'], pinned: true, linkedTodoId: null, updatedAt: at(today, 8, 20) }
+    ],
+    todos: [
+      { id: 't1', title: '交电费', notes: '供电所账单在短信里。', creatorId: 'linchen', due: at(tomorrow, 18, 0), reminderKind: 'due', reminderAt: at(tomorrow, 18, 0), assignees: [{ id: 'linchen', status: 'open', doneAt: null }] }
+    ],
+    events: [
+      { id: 'e1', title: '家长会', creatorId: 'linchen', allday: false, start: at(friday, 15, 0), end: at(friday, 16, 30), participantIds: ['linchen', 'zhouning'], reminderKind: 'm10', reminderAt: at(friday, 14, 50) }
+    ],
+    plans: [
+      {
+        id: 'p1', title: '每天阅读 20 分钟', desc: '孩子读完后写一句。', creatorId: 'linchen',
+        cycle: { type: 'daily' }, prevCycle: null, cycleEffective: null,
+        start: addIso(today, -10), end: '', reminder: '20:00', assigneeIds: ['xiaoman', 'zhouning'],
+        archived: false, archivedAt: null,
+        records: {
+          [today + '|xiaoman']: { status: 'done', feedback: '读了三页', at: at(today, 20, 5) },
+          [yesterday + '|zhouning']: { status: 'done', feedback: '读完一章', at: at(yesterday, 21, 0) }
+        }
+      },
+      {
+        id: 'p2', title: '每周一三五运动', desc: '各自出门走 30 分钟。', creatorId: 'linchen',
+        cycle: { type: 'weekly', weekdays: [1, 3, 5] }, prevCycle: null, cycleEffective: null,
+        start: addIso(today, -21), end: '', reminder: '07:30', assigneeIds: ['linchen', 'zhouning'],
+        archived: false, archivedAt: null, records: {}
+      }
+    ],
+    prefs: {
+      guest: { theme: 'night', font: 'standard' },
+      xiaoman: { theme: 'night', font: 'large' }
+    },
+    search: '',
+    noteQuery: '',
+    planSegment: 'active',
+    calMonth: today.slice(0, 7),
+    calSelected: today,
+    overlay: null,
+    toast: '',
+    offline: false,
+    failNextSave: false,
+    loading: false,
+    hydrated: false,
+    notif: { decision: null, dismissedAt: null },
+    draft: null,
+    fieldErrors: {},
+    loginUser: '',
+    loginPass: '',
+    expandedHistory: null
+  };
+}
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return seed();
+    const data = JSON.parse(raw);
+    if (!data.users || !data.plans) return seed();
+    data.toast = '';
+    data.loading = false;
+    data.overlay = null;
+    data.fieldErrors = {};
+    data.connectStatus = 'idle';
+    return data;
+  } catch (err) {
+    return seed();
+  }
+}
+function save() {
+  const copy = JSON.parse(JSON.stringify(state));
+  copy.toast = '';
+  copy.loading = false;
+  copy.overlay = null;
+  copy.fieldErrors = {};
+  localStorage.setItem(KEY, JSON.stringify(copy));
+}
+function currentPrefs() {
+  const id = state.sessionUserId || 'guest';
+  if (!state.prefs[id]) state.prefs[id] = { theme: 'night', font: 'standard' };
+  return state.prefs[id];
+}
+
+function cycleFor(plan, iso) {
+  if (plan.prevCycle && plan.cycleEffective && iso < plan.cycleEffective) return plan.prevCycle;
+  return plan.cycle;
+}
+function occursOn(plan, iso) {
+  if (plan.archived && plan.archivedAt && iso >= shDate(plan.archivedAt)) return false;
+  if (iso < plan.start) return false;
+  if (plan.end && iso > plan.end) return false;
+  const cycle = cycleFor(plan, iso);
+  if (cycle.type === 'daily') return true;
+  if (cycle.type === 'weekly') return cycle.weekdays.includes(weekday(iso));
+  if (cycle.type === 'monthly') return Number(iso.slice(8)) === Number(cycle.monthDay);
+  if (cycle.type === 'interval') {
+    const a = new Date(plan.start + 'T12:00:00+08:00').getTime();
+    const b = new Date(iso + 'T12:00:00+08:00').getTime();
+    return Math.round((b - a) / 86400000) % cycle.n === 0;
+  }
+  return false;
+}
+function entry(plan, iso, userId) {
+  const rec = (plan.records || {})[iso + '|' + userId];
+  if (rec) return rec;
+  const today = todayIso();
+  if (iso > today) return { status: 'future', feedback: '' };
+  if (iso === today) return { status: 'pending', feedback: '' };
+  return { status: 'missed', feedback: '' };
+}
+function cycleName(cycle) {
+  if (!cycle) return '';
+  if (cycle.type === 'daily') return '每天';
+  if (cycle.type === 'weekly') {
+    const days = cycle.weekdays.slice().sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+    return '每周' + days.map((d) => WEEK[d]).join('、');
+  }
+  if (cycle.type === 'monthly') return '每月' + cycle.monthDay + '日';
+  return '每' + cycle.n + '天';
+}
+function canSeeNote(note, user) {
+  if (note.authorId === user.id) return true;
+  if (note.visibility === 'specified' && note.memberIds.includes(user.id)) return true;
+  if (note.visibility === 'family' && user.role !== 'child') return true;
+  return false;
+}
+function canSeeTodo(todo, user) {
+  return todo.creatorId === user.id || todo.assignees.some((a) => a.id === user.id);
+}
+function canSeeEvent(ev, user) {
+  return ev.creatorId === user.id || ev.participantIds.includes(user.id);
+}
+function canSeePlan(plan, user) {
+  if (plan.assigneeIds.includes(user.id) || plan.creatorId === user.id) return true;
+  if ((user.role === 'admin' || user.role === 'parent') && plan.assigneeIds.some((id) => userById(id) && userById(id).role === 'child')) return true;
+  return false;
+}
+function assignable(user) {
+  const list = activeUsers();
+  if (user.role === 'child') return [user];
+  if (user.role === 'adult') return list.filter((m) => m.role !== 'child');
+  return list;
+}
+function canEditTodo(todo, user) {
+  if (user.role === 'child') return todo.creatorId === user.id;
+  return todo.creatorId === user.id || todo.assignees.some((a) => a.id === user.id);
+}
+function canEditEvent(ev, user) {
+  return ev.creatorId === user.id || user.role === 'admin' || user.role === 'parent';
+}
+function canEditPlan(plan, user) {
+  return plan.creatorId === user.id || user.role === 'admin';
+}
+
+function icon(name) {
+  const paths = {
+    back: '<path d="M14 5 7 12l7 7"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    today: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 2.5 2.5L16 9"/>',
+    cal: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/>',
+    plan: '<path d="M17 3v4M7 3v4M4 9h16"/><rect x="4" y="5" width="16" height="15" rx="2"/><path d="m9 15 2 2 4-4"/>',
+    note: '<path d="M6 4h9l3 3v13H6z"/><path d="M15 4v4h4M9 13h6M9 17h4"/>',
+    refresh: '<path d="M20 12a8 8 0 1 1-2.2-5.5"/><path d="M20 4v6h-6"/>',
+    close: '<path d="M7 7l10 10M17 7 7 17"/>',
+    insight: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="4"/><path d="m8.5 8.5 1.5 1.5M14 14l1.5 1.5M15.5 8.5 14 10M10 14l-1.5 1.5"/>',
+    lock: '<rect x="6" y="10" width="12" height="10" rx="2"/><path d="M8 10V8a4 4 0 0 1 8 0v2"/>',
+    users: '<circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3.5 19c.8-3 2.8-4.5 5.5-4.5S13.7 16 14.5 19M14 14.5c2 .2 3.5 1.3 4.2 3.5"/>',
+    server: '<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01M8 17h.01"/>',
+    key: '<circle cx="8" cy="14" r="3"/><path d="M10.5 12.5 19 4m-4 1 2 2"/>',
+    logout: '<path d="M10 7V5a2 2 0 0 1 2-2h7v18h-7a2 2 0 0 1-2-2v-2"/><path d="M15 12H3m4-4-4 4 4 4"/>',
+    chev: '<path d="m9 6 6 6-6 6"/>',
+    eye: '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/>',
+    home: '<path d="m4 11 8-7 8 7"/><path d="M6 10v9h12v-9"/>',
+    spark: '<path d="M12 3l1.2 5.2L18 9l-4.8 1.8L12 16l-1.2-5.2L6 9l4.8-.8z"/><path d="m18 14 .7 2.3L21 17l-2.3.7L18 20l-.7-2.3L15 17l2.3-.7z"/>',
+    check: '<path d="m6 12 4 4 8-8"/>'
+  };
+  const size = name === 'chev' || name === 'check' ? 18 : 22;
+  return '<svg class="ico" viewBox="0 0 24 24" width="' + size + '" height="' + size + '" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] || '') + '</svg>';
+}
+function pill(status) {
+  const kind = status === 'done' ? 'done' : (status === 'missed' ? 'miss' : '');
+  return '<span class="pill ' + kind + '">' + esc(statusName(status)) + '</span>';
+}
+
+function visibleNotes() { return state.notes.filter((n) => canSeeNote(n, me())); }
+function myPlansToday() {
+  const today = todayIso();
+  return state.plans.filter((p) => !p.archived && p.assigneeIds.includes(me().id) && occursOn(p, today));
+}
+function childRows() {
+  const user = me();
+  if (user.role !== 'admin' && user.role !== 'parent') return [];
+  const today = todayIso();
+  const rows = [];
+  activeUsers().filter((u) => u.role === 'child').forEach((child) => {
+    state.plans.filter((p) => !p.archived && p.assigneeIds.includes(child.id) && occursOn(p, today)).forEach((p) => {
+      rows.push({ child, plan: p, status: entry(p, today, child.id).status });
+    });
+  });
+  return rows;
+}
+function myOpenTodos() {
+  const today = todayIso();
+  return state.todos.filter((t) => {
+    const mine = t.assignees.find((a) => a.id === me().id && a.status === 'open');
+    if (!mine) return false;
+    if (!t.due) return true;
+    return shDate(t.due) <= today;
+  });
+}
+function upcomingEvents() {
+  const now = Date.now();
+  const limit = now + 48 * 3600 * 1000;
+  return state.events.filter((ev) => canSeeEvent(ev, me())).filter((ev) => {
+    const start = new Date(ev.start).getTime();
+    const end = new Date(ev.end).getTime();
+    return end >= now && start <= limit;
+  }).sort((a, b) => new Date(a.start) - new Date(b.start)).slice(0, 3);
+}
+function matchQuery(text) {
+  const q = state.search.trim();
+  return !q || text.includes(q);
+}
+function hasFutureReminder(user) {
+  const now = Date.now();
+  if (state.todos.some((t) => t.reminderAt && new Date(t.reminderAt) > now && t.assignees.some((a) => a.id === user.id))) return true;
+  if (state.events.some((ev) => ev.reminderAt && new Date(ev.reminderAt) > now && ev.participantIds.includes(user.id))) return true;
+  const today = todayIso();
+  return state.plans.some((p) => {
+    if (!p.reminder || p.archived || !p.assigneeIds.includes(user.id)) return false;
+    for (let i = 0; i < 14; i += 1) {
+      const iso = addIso(today, i);
+      if (occursOn(p, iso) && new Date(at(iso, Number(p.reminder.slice(0, 2)), Number(p.reminder.slice(3)))) > now) return true;
+    }
+    return false;
+  });
+}
+function dayItems(iso) {
+  const user = me();
+  const items = [];
+  state.events.filter((ev) => canSeeEvent(ev, user) && shDate(ev.start) === iso).forEach((ev) => {
+    items.push({ type: 'event', id: ev.id, title: ev.title, meta: ev.allday ? '全天' : shTime(ev.start) + '–' + shTime(ev.end), sort: ev.start });
+  });
+  state.todos.filter((t) => canSeeTodo(t, user) && t.due && shDate(t.due) === iso).forEach((t) => {
+    const mine = t.assignees.find((a) => a.id === user.id);
+    items.push({ type: 'todo', id: t.id, title: t.title, meta: mine ? statusName(mine.status === 'done' ? 'done' : 'open') : '待办', sort: t.due });
+  });
+  state.plans.filter((p) => canSeePlan(p, user) && occursOn(p, iso)).forEach((p) => {
+    let meta = cycleName(cycleFor(p, iso));
+    if (p.assigneeIds.includes(user.id)) meta = statusName(entry(p, iso, user.id).status);
+    else meta = p.assigneeIds.filter((id) => userById(id).role === 'child').map((id) => userById(id).name + statusName(entry(p, iso, id).status)).join('、');
+    items.push({ type: 'plan', id: p.id, title: p.title, meta, sort: iso + 'T23:00:00+08:00' });
+  });
+  return items.sort((a, b) => String(a.sort).localeCompare(String(b.sort)));
+}
+
+function bannerHtml() {
+  if (state.notif.decision !== 'denied') return '';
+  if (state.notif.dismissedAt && Date.now() - state.notif.dismissedAt < 7 * 86400000) return '';
+  return '<div class="banner" role="status"><p>提醒权限未开启。事项仍会保存，但这台手机不会响。</p><button type="button" class="btn secondary" data-act="open-notif">去设置</button><button type="button" class="iconbtn" data-act="dismiss-banner" aria-label="关闭提醒说明">' + icon('close') + '</button></div>';
+}
+function offlineBanner() {
+  if (!state.offline || !state.hydrated) return '';
+  return '<div class="banner" role="alert"><p>暂时连不上家庭服务器</p><button type="button" class="btn secondary" data-act="refresh">重试</button></div>';
+}
+function emptyBlock(title, copy, act, label) {
+  return '<div class="empty"><h2>' + esc(title) + '</h2><p class="meta">' + esc(copy) + '</p>' + (act ? '<button type="button" class="btn" data-act="' + act + '">' + esc(label) + '</button>' : '') + '</div>';
+}
+function skeleton() {
+  return '<div class="skel"></div><div class="skel w2"></div><div class="skel"></div><p class="sr">正在加载</p>';
+}
+function errorPage() {
+  return '<div class="empty" role="alert"><h2>暂时连不上家庭服务器</h2><p class="meta">检查家里的网络后再试。已经登记在手机上的提醒不受这次失败影响。</p><button type="button" class="btn" data-act="refresh">重试</button></div>';
+}
+
+function todayStats() {
+  const user = me();
+  const today = todayIso();
+  let total = 0;
+  let done = 0;
+  myPlansToday().forEach((p) => {
+    total += 1;
+    if (entry(p, today, user.id).status === 'done') done += 1;
+  });
+  state.todos.forEach((t) => {
+    const mine = t.assignees.find((a) => a.id === user.id);
+    if (!mine) return;
+    const dueDay = t.due ? shDate(t.due) : null;
+    const relevant = !dueDay || dueDay <= today || (mine.status === 'done' && mine.doneAt && shDate(mine.doneAt) === today);
+    if (!relevant) return;
+    total += 1;
+    if (mine.status === 'done') done += 1;
+  });
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return { total, done, pct };
+}
+function heroHtml() {
+  const s = todayStats();
+  const r = 42;
+  const c = 2 * Math.PI * r;
+  const offset = c - (c * s.pct) / 100;
+  const copy = s.total
+    ? (s.done === s.total ? '今天该做的都完成了' : '还剩 ' + (s.total - s.done) + ' 件要跟进')
+    : '今天还没有要打卡或勾选的事项';
+  return '<section class="hero" aria-label="今日进度"><div class="ring" aria-hidden="true"><svg viewBox="0 0 104 104"><defs><linearGradient id="ltGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="oklch(0.62 0.22 292)"/><stop offset="100%" stop-color="oklch(0.72 0.18 330)"/></linearGradient></defs><circle class="track" cx="52" cy="52" r="' + r + '"/><circle class="prog" cx="52" cy="52" r="' + r + '" stroke-dasharray="' + c.toFixed(2) + '" stroke-dashoffset="' + offset.toFixed(2) + '"/></svg><div class="center"><strong>' + s.done + '</strong><span>/' + s.total + '</span></div></div><div class="hero-copy"><h2>' + s.pct + '% 完成</h2><p>' + esc(copy) + '</p></div></section>';
+}
+function todayHtml() {
+  const user = me();
+  const today = todayIso();
+  if (state.loading) {
+    return headToday(user, today) + '<div class="scroller" id="scroller">' + skeleton() + '</div>';
+  }
+  if (state.offline && !state.hydrated) {
+    return headToday(user, today) + '<div class="scroller" id="scroller">' + errorPage() + '</div>';
+  }
+  state.hydrated = true;
+  let rowsChild = childRows().filter((r) => matchQuery(r.plan.title) || matchQuery(r.child.name));
+  let punches = myPlansToday().filter((p) => matchQuery(p.title));
+  let todos = myOpenTodos().filter((t) => matchQuery(t.title));
+  let events = upcomingEvents().filter((ev) => matchQuery(ev.title));
+  let body = offlineBanner() + bannerHtml() + heroHtml();
+  if (!rowsChild.length && !punches.length && !todos.length && !events.length) {
+    body += state.search.trim()
+      ? emptyBlock('没有匹配的事项', '换个词，或者清空搜索。', 'clear-search', '清除搜索')
+      : emptyBlock('今天还没有安排', '写下一件要做的事，或者等家里人把计划派给你。', 'create-todo', '写一条待办');
+  } else {
+    if (rowsChild.length) {
+      body += '<h2>孩子今天</h2>';
+      rowsChild.forEach((r) => {
+        body += '<button type="button" class="row" data-act="open-plan" data-id="' + esc(r.plan.id) + '"><span class="line"><span class="title">' + esc(r.child.name) + '</span>' + pill(r.status) + '</span><span class="meta">' + esc(r.plan.title) + '</span></button>';
+      });
+    }
+    if (punches.length) {
+      body += '<h2>今日打卡</h2>';
+      punches.forEach((p) => {
+        const rec = entry(p, today, user.id);
+        body += '<button type="button" class="row" data-act="open-plan" data-id="' + esc(p.id) + '"><span class="line"><span class="title">' + esc(p.title) + '</span>' + pill(rec.status) + '</span><span class="meta">' + esc(rec.feedback || cycleName(p.cycle)) + '</span></button>';
+      });
+    }
+    if (todos.length) {
+      body += '<h2>今日待办</h2>';
+      todos.forEach((t) => {
+        const late = t.due && new Date(t.due).getTime() < Date.now();
+        body += '<button type="button" class="row" data-act="open-todo" data-id="' + esc(t.id) + '"><span class="line"><span class="title">' + esc(t.title) + '</span>' + (late ? '<span class="pill late">已过期</span>' : '') + '</span><span class="meta">' + esc(t.due ? shTime(t.due) + ' 截止' : '没有截止时间') + '</span></button>';
+      });
+    }
+    if (events.length) {
+      body += '<h2>接下来</h2>';
+      events.forEach((ev) => {
+        body += '<button type="button" class="row" data-act="open-event" data-id="' + esc(ev.id) + '"><span class="title">' + esc(ev.title) + '</span><span class="meta">' + esc(ev.allday ? '全天' : shDate(ev.start).slice(5) + ' ' + shTime(ev.start)) + '</span></button>';
+      });
+    }
+  }
+  return headToday(user, today) + '<div class="scroller pad-tab" id="scroller">' + body + '</div>' + fab();
+}
+function headToday(user, today) {
+  return '<header class="top"><div class="datehead grow"><p class="daynum">' + Number(today.slice(8)) + '</p><div><h1 class="sr">今天</h1><p class="meta">' + Number(today.slice(5, 7)) + '月 · ' + weekdayZh(today) + '</p><p class="title">' + esc(user.name) + '</p></div></div><button type="button" class="iconbtn" data-act="refresh" aria-label="刷新">' + icon('refresh') + '</button><button type="button" class="avatar" data-act="open-profile" aria-label="我的，' + esc(user.name) + '">' + esc(user.name.slice(0, 1)) + '</button></header><div class="searchpad"><div class="search"><input id="f-search" data-bind="search" data-render="1" type="search" placeholder="搜索今天的事项" value="' + esc(state.search) + '" aria-label="搜索今天的事项"></div></div>';
+}
+function fab() {
+  if (stackTop()) return '';
+  return '<button type="button" class="fab" data-act="open-menu" aria-label="新建">' + icon('plus') + '</button>';
+}
+
+function calendarHtml() {
+  const month = state.calMonth;
+  const [year, mon] = month.split('-').map(Number);
+  const start = month + '-01';
+  const next = mon === 12 ? (year + 1) + '-01-01' : year + '-' + pad(mon + 1) + '-01';
+  const days = [];
+  let cursor = start;
+  while (cursor < next) { days.push(cursor); cursor = addIso(cursor, 1); }
+  const lead = (weekday(start) + 6) % 7;
+  let cells = '';
+  for (let i = 0; i < lead; i += 1) cells += '<span></span>';
+  days.forEach((iso) => {
+    const has = dayItems(iso).length > 0;
+    cells += '<button type="button" class="day" data-act="cal-day" data-id="' + iso + '" aria-pressed="' + (iso === state.calSelected) + '" aria-label="' + iso + (has ? ' 有安排' : '') + '"><span>' + Number(iso.slice(8)) + '</span>' + (has ? '<span class="dot"></span>' : '<span class="dot" style="visibility:hidden"></span>') + '</button>';
+  });
+  const items = dayItems(state.calSelected);
+  let agenda = '<h2>' + Number(state.calSelected.slice(5, 7)) + '月' + Number(state.calSelected.slice(8)) + '日</h2>';
+  if (!items.length) {
+    const act = me().role === 'child' ? '' : 'create-event';
+    agenda += emptyBlock('这一天还没有安排', '日程、待办和计划会汇总在这里。', act, '新建');
+  } else {
+    items.forEach((item) => {
+      const act = item.type === 'event' ? 'open-event' : item.type === 'todo' ? 'open-todo' : 'open-plan';
+      agenda += '<button type="button" class="row" data-act="' + act + '" data-id="' + esc(item.id) + '"><span class="title">' + esc(item.title) + '</span><span class="meta">' + esc(item.meta) + '</span></button>';
+    });
+  }
+  const body = state.loading ? skeleton() : (state.offline && !state.hydrated ? errorPage() : offlineBanner() + '<div class="calhead"><button type="button" class="btn secondary" data-act="cal-prev">上个月</button><p class="title">' + year + '年' + mon + '月</p><button type="button" class="btn secondary" data-act="cal-next">下个月</button></div><div class="rowbtns" style="margin:8px 0"><button type="button" class="btn secondary" data-act="cal-today">今天</button></div><div class="week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div><div class="grid">' + cells + '</div>' + agenda);
+  return '<header class="top"><h1>日历</h1></header><div class="scroller pad-tab" id="scroller">' + body + '</div>' + fab();
+}
+
+function plansHtml() {
+  const user = me();
+  const today = todayIso();
+  const list = state.plans.filter((p) => canSeePlan(p, user) && p.archived === (state.planSegment === 'archived'));
+  let body = '<div class="seg" role="group" aria-label="计划状态"><button type="button" data-act="plan-segment" data-id="active" aria-pressed="' + (state.planSegment === 'active') + '">进行中</button><button type="button" data-act="plan-segment" data-id="archived" aria-pressed="' + (state.planSegment === 'archived') + '">已归档</button></div>';
+  if (state.loading) body += skeleton();
+  else if (state.offline && !state.hydrated) body += errorPage();
+  else if (!list.length) body += emptyBlock('还没有计划', state.planSegment === 'archived' ? '归档的计划会出现在这里。' : '把重复要做的事交给一个或多个人。', user.role === 'child' || state.planSegment === 'archived' ? '' : 'create-plan', '新建计划');
+  else {
+    body += offlineBanner();
+    list.forEach((p) => {
+      const people = p.assigneeIds.map((id) => {
+        const st = occursOn(p, today) ? entry(p, today, id).status : 'future';
+        return userById(id).name + statusName(st);
+      }).join(' · ');
+      body += '<button type="button" class="row" data-act="open-plan" data-id="' + esc(p.id) + '"><span class="title">' + esc(p.title) + '</span><span class="meta">' + esc(cycleName(p.cycle) + ' · ' + people) + '</span></button>';
+    });
+  }
+  return '<header class="top"><h1>计划</h1></header><div class="scroller pad-tab" id="scroller">' + body + '</div>' + fab();
+}
+
+function notesHtml() {
+  const q = state.noteQuery.trim();
+  let list = visibleNotes().filter((n) => !q || n.title.includes(q) || (n.body || '').includes(q));
+  list = list.slice().sort((a, b) => Number(b.pinned) - Number(a.pinned) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  let body = '<div class="search"><input id="f-noteQuery" data-bind="noteQuery" data-render="1" type="search" placeholder="搜索便签" value="' + esc(state.noteQuery) + '" aria-label="搜索便签"></div>';
+  if (state.loading) body += skeleton();
+  else if (state.offline && !state.hydrated) body += errorPage();
+  else if (!list.length) body += q ? emptyBlock('没有匹配的便签', '换个词再试。', 'clear-note-search', '清除搜索') : emptyBlock('还没有便签', '短记录先放在这里，需要办的时候再转成待办。', 'create-note', '写一条');
+  else {
+    body += offlineBanner();
+    list.forEach((n) => {
+      const scope = n.visibility === 'private' ? '仅自己' : n.visibility === 'family' ? '全家' : '指定成员';
+      body += '<button type="button" class="row" data-act="open-note" data-id="' + esc(n.id) + '"><span class="line"><span class="title">' + esc(n.title) + '</span>' + (n.pinned ? '<span class="pill">置顶</span>' : '') + '</span><span class="meta">' + esc(scope) + '</span></button>';
+    });
+  }
+  return '<header class="top"><h1>便签</h1></header><div class="scroller pad-tab" id="scroller">' + body + '</div>' + fab();
+}
+
+function missing(copy) {
+  return '<header class="top"><button type="button" class="iconbtn" data-act="goto-today" aria-label="回到今天">' + icon('back') + '</button><h1>无法打开</h1></header><div class="scroller">' + emptyBlock('这条内容不存在或你没有权限', copy || '它可能已被删除，或没有分享给你。', 'goto-today', '回到今天') + '</div>';
+}
+function stackHead(title, extra) {
+  return '<header class="top"><button type="button" class="iconbtn" data-act="back" aria-label="返回">' + icon('back') + '</button><h1>' + esc(title) + '</h1>' + (extra || '') + '</header>';
+}
+
+function planDetail() {
+  const plan = state.plans.find((p) => p.id === stackTop().id);
+  const user = me();
+  if (!plan || !canSeePlan(plan, user)) return missing();
+  const today = todayIso();
+  const occurs = occursOn(plan, today);
+  let people = '<div class="card">';
+  plan.assigneeIds.forEach((id) => {
+    const rec = occurs ? entry(plan, today, id) : { status: 'future', feedback: '' };
+    people += '<div class="person"><div><p class="title">' + esc(userById(id).name) + '</p><p class="meta">' + esc(rec.feedback || '') + '</p></div>' + pill(rec.status) + '</div>';
+  });
+  people += '</div>';
+  const mine = plan.assigneeIds.includes(user.id) ? entry(plan, today, user.id) : null;
+  const canCheck = occurs && mine && mine.status === 'pending' && !plan.archived;
+  let history = '<h2>以往周期</h2>';
+  const past = [];
+  let d = addIso(today, -1);
+  let guard = 0;
+  while (d >= plan.start && past.length < 8 && guard < 120) {
+    if (occursOn(plan, d) || (plan.records && Object.keys(plan.records).some((k) => k.startsWith(d + '|')))) past.push(d);
+    d = addIso(d, -1);
+    guard += 1;
+  }
+  if (!past.length) history += '<p class="meta">还没有过去的周期。</p>';
+  past.forEach((iso) => {
+    const open = state.expandedHistory === iso;
+    history += '<button type="button" class="row" data-act="expand-history" data-id="' + iso + '" aria-expanded="' + open + '"><span class="title">' + Number(iso.slice(5, 7)) + '月' + Number(iso.slice(8)) + '日</span></button>';
+    if (open) {
+      plan.assigneeIds.forEach((id) => {
+        const rec = entry(plan, iso, id);
+        history += '<div class="person"><span>' + esc(userById(id).name) + '</span>' + pill(rec.status) + '</div>';
+      });
+    }
+  });
+  const edit = canEditPlan(plan, user) && !plan.archived ? '<button type="button" class="btn secondary" data-act="edit-plan" data-id="' + plan.id + '">编辑</button>' : '';
+  const archive = canEditPlan(plan, user) && !plan.archived ? '<button type="button" class="btn danger" data-act="ask-archive" data-id="' + plan.id + '">归档计划</button>' : '';
+  const next = !occurs ? '<p class="meta">今天不是打卡日。</p>' : '';
+  return stackHead(plan.title, '') + '<div class="scroller' + (canCheck ? ' pad-bar' : '') + '" id="scroller"><p class="meta">' + esc(cycleName(plan.cycle)) + (plan.reminder ? ' · ' + plan.reminder + ' 提醒' : ' · 不提醒') + '</p><p>' + esc(plan.desc || '') + '</p>' + next + '<h2>本周期</h2>' + people + history + '<div class="col" style="margin-top:16px">' + edit + archive + '</div></div>' + (canCheck ? '<div class="dock"><button type="button" class="btn" data-act="open-checkin" data-id="' + plan.id + '">完成打卡</button></div>' : '');
+}
+
+function noteDetail() {
+  const note = state.notes.find((n) => n.id === stackTop().id);
+  if (!note || !canSeeNote(note, me())) return missing();
+  const scope = note.visibility === 'private' ? '仅自己' : note.visibility === 'family' ? '全家成人可见' : '指定给 ' + note.memberIds.map((id) => userById(id).name).join('、');
+  const owner = note.authorId === me().id;
+  const link = note.linkedTodoId ? '<button type="button" class="btn secondary" data-act="open-todo" data-id="' + esc(note.linkedTodoId) + '">已关联待办</button>' : '';
+  const tools = owner ? '<div class="col"><button type="button" class="btn secondary" data-act="edit-note" data-id="' + note.id + '">编辑</button><button type="button" class="btn secondary" data-act="toggle-pin" data-id="' + note.id + '">' + (note.pinned ? '取消置顶' : '置顶') + '</button><button type="button" class="btn secondary" data-act="convert-note" data-id="' + note.id + '">转为待办</button><button type="button" class="btn danger" data-act="ask-delete-note" data-id="' + note.id + '">删除</button></div>' : '';
+  return stackHead(note.title) + '<div class="scroller" id="scroller"><p class="meta">' + esc(scope) + '</p><p>' + esc(note.body || '没有正文') + '</p>' + link + tools + '</div>';
+}
+
+function todoDetail() {
+  const todo = state.todos.find((t) => t.id === stackTop().id);
+  if (!todo || !canSeeTodo(todo, me())) return missing();
+  const user = me();
+  let people = '';
+  todo.assignees.forEach((a) => {
+    const who = userById(a.id);
+    const mine = a.id === user.id;
+    people += '<div class="person"><div><p class="title">' + esc(who.name) + '</p><p class="meta">' + esc(a.status === 'done' ? '已完成' : (todo.due && shDate(todo.due) < todayIso() ? '已过期' : '未完成')) + '</p></div>' + (mine ? '<button type="button" class="btn secondary" data-act="toggle-my-todo" data-id="' + todo.id + '">' + (a.status === 'done' ? '改回未完成' : '我完成了') + '</button>' : pill(a.status === 'done' ? 'done' : 'open')) + '</div>';
+  });
+  const tools = [];
+  if (canEditTodo(todo, user)) tools.push('<button type="button" class="btn secondary" data-act="edit-todo" data-id="' + todo.id + '">编辑</button>');
+  if (todo.creatorId === user.id || user.role === 'admin') tools.push('<button type="button" class="btn danger" data-act="ask-delete-todo" data-id="' + todo.id + '">删除</button>');
+  return stackHead(todo.title) + '<div class="scroller" id="scroller"><p>' + esc(todo.notes || '') + '</p><p class="meta">' + esc(todo.due ? '截止 ' + shDate(todo.due) + ' ' + shTime(todo.due) : '没有截止时间') + '</p><h2>执行人</h2><div class="card">' + people + '</div><div class="col">' + tools.join('') + '</div></div>';
+}
+
+function eventDetail() {
+  const ev = state.events.find((e) => e.id === stackTop().id);
+  if (!ev || !canSeeEvent(ev, me())) return missing();
+  const names = ev.participantIds.map((id) => userById(id).name).join('、');
+  const when = ev.allday ? shDate(ev.start) + ' 全天' : shDate(ev.start) + ' ' + shTime(ev.start) + '–' + shTime(ev.end);
+  const tools = canEditEvent(ev, me()) ? '<div class="col"><button type="button" class="btn secondary" data-act="edit-event" data-id="' + ev.id + '">编辑</button><button type="button" class="btn danger" data-act="ask-delete-event" data-id="' + ev.id + '">删除</button></div>' : '';
+  return stackHead(ev.title) + '<div class="scroller" id="scroller"><p>' + esc(when) + '</p><p class="meta">参与人 ' + esc(names) + '</p>' + tools + '</div>';
+}
+
+function profileStats() {
+  const user = me();
+  const today = todayIso();
+  const mineNotes = state.notes.filter((n) => n.authorId === user.id).length;
+  let done7 = 0;
+  let due7 = 0;
+  for (let i = 0; i < 7; i += 1) {
+    const iso = addIso(today, -i);
+    state.plans.forEach((p) => {
+      if (!p.assigneeIds.includes(user.id) || !occursOn(p, iso)) return;
+      due7 += 1;
+      if (entry(p, iso, user.id).status === 'done') done7 += 1;
+    });
+  }
+  const openTodos = state.todos.filter((t) => t.assignees.some((a) => a.id === user.id && a.status === 'open')).length;
+  return { mineNotes, done7, due7, openTodos, rate: due7 ? Math.round((done7 / due7) * 100) : 0 };
+}
+function profileHtml() {
+  const user = me();
+  const p = currentPrefs();
+  const s = profileStats();
+  const themes = [
+    ['night', '夜航', ['#1a1625', '#6b4cff', '#e94b9e']],
+    ['day', '日间清晰', ['#f5f7fb', '#3b5bdb', '#0e9f6e']],
+    ['paper', '暖纸', ['#f6f0e6', '#c46b3a', '#2f7d4a']]
+  ];
+  const fonts = [['standard', '标准'], ['large', '大']];
+  const menus = [
+    ['open-insights', 'spark', 'AI 洞察', '看家庭执行节奏与建议'],
+    ['open-password', 'key', '修改密码', '只改你自己的登录密码'],
+    user.role === 'admin' ? ['open-members', 'users', '家庭成员', '邀请、停用与重置密码'] : null,
+    ['ask-server', 'server', '服务器', state.serverUrl || '尚未填写地址']
+  ].filter(Boolean);
+  return stackHead('我的') + '<div class="scroller" id="scroller">' +
+    '<section class="profile-hero"><div class="profile-avatar" aria-hidden="true">' + esc(user.name.slice(0, 1)) + '</div><div><h2>' + esc(user.name) + '</h2><p class="meta">' + esc(roleName(user.role)) + ' · @' + esc(user.username) + '</p><p class="meta">' + esc(state.familyName) + '</p></div></section>' +
+    '<div class="stat-row"><div class="stat"><strong>' + s.rate + '%</strong><span>近 7 日打卡</span></div><div class="stat"><strong>' + s.openTodos + '</strong><span>未完成待办</span></div><div class="stat"><strong>' + s.mineNotes + '</strong><span>我的便签</span></div></div>' +
+    '<h2>外观</h2><div class="theme-grid">' + themes.map(([id, label, colors]) =>
+      '<button type="button" class="theme-swatch" data-act="theme" data-id="' + id + '" aria-pressed="' + (p.theme === id) + '" style="background:linear-gradient(160deg,' + colors[0] + ',' + colors[1] + '22)"><span class="dotrow"><i style="background:' + colors[0] + '"></i><i style="background:' + colors[1] + '"></i><i style="background:' + colors[2] + '"></i></span><strong>' + label + '</strong></button>'
+    ).join('') + '</div>' +
+    '<div class="seg" role="group" aria-label="字号">' + fonts.map(([id, label]) => '<button type="button" data-act="font" data-id="' + id + '" aria-pressed="' + (p.font === id) + '">' + label + '</button>').join('') + '</div>' +
+    '<h2>账户与家庭</h2><div class="menu-list">' + menus.map(([act, ico, title, desc]) =>
+      '<button type="button" class="menu-item" data-act="' + act + '"><span class="mi">' + icon(ico) + '</span><span><strong>' + esc(title) + '</strong><span>' + esc(desc) + '</span></span><span class="chev">' + icon('chev') + '</span></button>'
+    ).join('') + '</div>' +
+    '<div class="col"><button type="button" class="btn danger" data-act="logout">退出登录</button></div>' +
+    '<h2>原型调试</h2><div class="menu-list">' +
+      '<button type="button" class="menu-item" data-act="toggle-offline"><span class="mi">' + icon('server') + '</span><span><strong>' + (state.offline ? '恢复连接' : '模拟连不上') + '</strong><span>测试离线与重试</span></span><span class="chev">' + icon('chev') + '</span></button>' +
+      '<button type="button" class="menu-item" data-act="toggle-fail"><span class="mi">' + icon('spark') + '</span><span><strong>' + (state.failNextSave ? '取消下次失败' : '下次保存失败') + '</strong><span>验证表单失败反馈</span></span><span class="chev">' + icon('chev') + '</span></button>' +
+      '<button type="button" class="menu-item" data-act="ask-reset"><span class="mi">' + icon('refresh') + '</span><span><strong>重置演示数据</strong><span>恢复示例家庭</span></span><span class="chev">' + icon('chev') + '</span></button>' +
+    '</div><p class="meta">提醒保存在这台手机上。重新安装后，打开应用同步一次即可恢复未来的提醒。</p></div>';
+}
+
+function membersHtml() {
+  if (me().role !== 'admin') return missing('只有管理员可以管理成员。');
+  const rows = state.users.map((u) => '<button type="button" class="row" data-act="open-member" data-id="' + u.id + '"><span class="line"><span class="title">' + esc(u.name) + '</span><span class="pill">' + esc(u.disabled ? '已停用' : roleName(u.role)) + '</span></span><span class="meta">' + esc(u.username) + '</span></button>').join('');
+  return stackHead('成员') + '<div class="scroller" id="scroller">' + rows + '<button type="button" class="btn" data-act="new-member">添加成员</button></div>';
+}
+
+function fieldWrap(id, label, control, err) {
+  return '<div class="field"><label for="' + id + '">' + esc(label) + '</label>' + control + (err ? '<p class="err" id="' + id + '-err">' + esc(err) + '</p>' : '') + '</div>';
+}
+function inputBox(id, bind, value, type, err) {
+  return '<input id="' + id + '" data-bind="' + bind + '" type="' + type + '" value="' + esc(value || '') + '"' + (err ? ' aria-invalid="true" aria-describedby="' + id + '-err"' : '') + '>';
+}
+
+function memberForm() {
+  const d = state.draft;
+  const err = state.fieldErrors;
+  const self = d.id === me().id;
+  const roles = ['parent', 'adult', 'child'].map((r) => '<option value="' + r + '"' + (d.role === r ? ' selected' : '') + '>' + roleName(r) + '</option>').join('');
+  return stackHead(d.isNew ? '添加成员' : '编辑成员') + '<div class="scroller" id="scroller"><form data-act="save-member">' +
+    fieldWrap('m-name', '显示名', inputBox('m-name', 'draft.name', d.name, 'text', err.name), err.name) +
+    fieldWrap('m-user', '用户名', inputBox('m-user', 'draft.username', d.username, 'text', err.username), err.username) +
+    fieldWrap('m-pass', d.isNew ? '初始密码' : '重置密码（可留空）', inputBox('m-pass', 'draft.password', d.password, 'text', err.password), err.password) +
+    (self ? '<p class="meta">不能修改自己的角色，也不能停用自己。</p>' : fieldWrap('m-role', '角色', '<select id="m-role" data-bind="draft.role" data-render="1">' + roles + '</select>', '')) +
+    '<div class="col"><button class="btn" type="submit">保存</button>' + (!d.isNew && !self ? '<button type="button" class="btn danger" data-act="' + (d.disabled ? 'enable-member' : 'ask-disable') + '" data-id="' + d.id + '">' + (d.disabled ? '恢复' : '停用') + '</button>' : '') + '</div></form></div>';
+}
+
+function passwordHtml() {
+  const d = state.draft;
+  const err = state.fieldErrors;
+  return stackHead('修改密码') + '<div class="scroller" id="scroller"><form data-act="save-password">' +
+    fieldWrap('pw1', '当前密码', inputBox('pw1', 'draft.current', d.current, 'password', err.current), err.current) +
+    fieldWrap('pw2', '新密码', inputBox('pw2', 'draft.next', d.next, 'password', err.next), err.next) +
+    fieldWrap('pw3', '确认新密码', inputBox('pw3', 'draft.again', d.again, 'password', err.again), err.again) +
+    '<button class="btn" type="submit">保存</button></form></div>';
+}
+
+function checks(list, selected) {
+  if (!list.length) return '<p class="meta">没有可选的家人</p>';
+  return '<div class="checks">' + list.map((m) => {
+    const on = selected.includes(m.id);
+    return '<button type="button" class="check" data-act="toggle-member" data-id="' + m.id + '" aria-pressed="' + on + '"><span>' + esc(m.name) + '</span><span class="meta">' + esc(roleName(m.role)) + '</span></button>';
+  }).join('') + '</div>';
+}
+
+function visCard(id, title, desc, ico, pressed) {
+  return '<button type="button" class="vis-card" data-act="set-visibility" data-id="' + id + '" aria-pressed="' + pressed + '"><span class="vis-ico">' + icon(ico) + '</span><span><strong>' + esc(title) + '</strong><span>' + esc(desc) + '</span></span><span class="vis-check" aria-hidden="true">' + icon('check') + '</span></button>';
+}
+function noteForm() {
+  const d = state.draft;
+  const err = state.fieldErrors;
+  const user = me();
+  const options = user.role === 'child'
+    ? visCard('private', '仅自己', '只有你能看到这条便签', 'lock', d.visibility === 'private') +
+      visCard('specified', '指定家长', '选择一位或多位家长一起看', 'users', d.visibility === 'specified')
+    : visCard('private', '仅自己', '只有你能看到，适合私人备忘', 'lock', d.visibility === 'private') +
+      visCard('specified', '指定成员', '点选家人后，只有他们能看', 'users', d.visibility === 'specified') +
+      visCard('family', '全家成人', '所有成人和家长可见，孩子默认看不到', 'home', d.visibility === 'family');
+  let pick = '';
+  if (d.visibility === 'specified') {
+    const list = user.role === 'child'
+      ? activeUsers().filter((m) => m.role === 'admin' || m.role === 'parent')
+      : assignable(user).filter((m) => m.id !== user.id);
+    const chips = (d.memberIds || []).map((id) => {
+      const m = userById(id);
+      return m ? '<span class="member-chip"><i>' + esc(m.name.slice(0, 1)) + '</i>' + esc(m.name) + '</span>' : '';
+    }).join('');
+    pick = '<div class="card" style="margin-top:4px"><p class="meta" style="margin:0 0 10px">' + (user.role === 'child' ? '已选家长' : '已选成员') + (chips ? '' : ' · 还没选') + '</p>' + (chips ? '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">' + chips + '</div>' : '') + checks(list, d.memberIds) + '</div>';
+  }
+  return stackHead(d.id ? '编辑便签' : '写便签') + '<div class="scroller" id="scroller"><form data-act="save-note">' +
+    fieldWrap('n-title', '标题', inputBox('n-title', 'draft.title', d.title, 'text', err.title), err.title) +
+    fieldWrap('n-body', '正文', '<textarea id="n-body" data-bind="draft.body" placeholder="想记的细节可以写在这里">' + esc(d.body || '') + '</textarea>', '') +
+    '<div class="field"><span class="meta" id="vis-label">谁可以看</span><div class="vis-grid" role="group" aria-labelledby="vis-label">' + options + '</div></div>' + pick +
+    '<button class="btn" type="submit">保存便签</button></form></div>';
+}
+
+function todoForm() {
+  const d = state.draft;
+  const err = state.fieldErrors;
+  const user = me();
+  const kinds = '<option value="none"' + (d.reminderKind === 'none' ? ' selected' : '') + '>不提醒</option><option value="due"' + (d.reminderKind === 'due' ? ' selected' : '') + (d.due ? '' : ' disabled') + '>截止时</option><option value="before1h"' + (d.reminderKind === 'before1h' ? ' selected' : '') + (d.due ? '' : ' disabled') + '>提前 1 小时</option><option value="custom"' + (d.reminderKind === 'custom' ? ' selected' : '') + '>自定义时间</option>';
+  const custom = d.reminderKind === 'custom' ? fieldWrap('td-custom', '提醒时间', '<input id="td-custom" data-bind="draft.customReminder" data-render="1" type="datetime-local" value="' + esc(d.customReminder || '') + '">', err.customReminder) : '';
+  const people = user.role === 'child' ? '<p class="meta">执行人是你自己。</p>' : '<h2>执行人</h2>' + checks(assignable(user), d.assigneeIds) + (err.assignees ? '<p class="err">' + esc(err.assignees) + '</p>' : '');
+  return stackHead(d.id ? '编辑待办' : '写待办') + '<div class="scroller" id="scroller"><form data-act="save-todo">' +
+    fieldWrap('td-title', '标题', inputBox('td-title', 'draft.title', d.title, 'text', err.title), err.title) +
+    fieldWrap('td-notes', '补充说明', '<textarea id="td-notes" data-bind="draft.notes">' + esc(d.notes || '') + '</textarea>', '') +
+    fieldWrap('td-due', '截止时间', '<input id="td-due" data-bind="draft.due" data-render="1" type="datetime-local" value="' + esc(d.due || '') + '">', err.due) +
+    fieldWrap('td-kind', '提醒', '<select id="td-kind" data-bind="draft.reminderKind" data-render="1">' + kinds + '</select>', '') +
+    custom + people + '<button class="btn" type="submit">保存</button></form></div>';
+}
+
+function eventForm() {
+  const d = state.draft;
+  const err = state.fieldErrors;
+  const time = d.allday
+    ? fieldWrap('ev-date', '日期', '<input id="ev-date" data-bind="draft.date" type="date" value="' + esc(d.date || '') + '">', err.date) + fieldWrap('ev-kind', '提醒', '<select id="ev-kind" data-bind="draft.reminderKind" data-render="1"><option value="none"' + (d.reminderKind === 'none' ? ' selected' : '') + '>不提醒</option><option value="day9"' + (d.reminderKind === 'day9' ? ' selected' : '') + '>当天 09:00</option><option value="prev9"' + (d.reminderKind === 'prev9' ? ' selected' : '') + '>提前一天 09:00</option></select>', '')
+    : fieldWrap('ev-start', '开始', '<input id="ev-start" data-bind="draft.start" type="datetime-local" value="' + esc(d.start || '') + '">', err.start) + fieldWrap('ev-end', '结束', '<input id="ev-end" data-bind="draft.end" type="datetime-local" value="' + esc(d.end || '') + '">', err.end) + fieldWrap('ev-kind', '提醒', '<select id="ev-kind" data-bind="draft.reminderKind" data-render="1"><option value="none"' + (d.reminderKind === 'none' ? ' selected' : '') + '>不提醒</option><option value="start"' + (d.reminderKind === 'start' ? ' selected' : '') + '>开始时</option><option value="m10"' + (d.reminderKind === 'm10' ? ' selected' : '') + '>提前 10 分钟</option><option value="h1"' + (d.reminderKind === 'h1' ? ' selected' : '') + '>提前 1 小时</option></select>', '');
+  return stackHead(d.id ? '编辑日程' : '新建日程') + '<div class="scroller" id="scroller"><form data-act="save-event">' +
+    fieldWrap('ev-title', '标题', inputBox('ev-title', 'draft.title', d.title, 'text', err.title), err.title) +
+    '<label class="choice"><input id="ev-all" data-bind="draft.allday" data-render="1" type="checkbox"' + (d.allday ? ' checked' : '') + '> 全天</label>' + time +
+    '<h2>参与人</h2>' + checks(assignable(me()), d.participantIds) + (err.participants ? '<p class="err">' + esc(err.participants) + '</p>' : '') +
+    '<button class="btn" type="submit">保存</button></form></div>';
+}
+
+function planForm() {
+  const d = state.draft;
+  const err = state.fieldErrors;
+  const days = [1, 2, 3, 4, 5, 6, 0].map((n) => '<button type="button" data-act="toggle-weekday" data-id="' + n + '" aria-pressed="' + d.weekdays.includes(n) + '">' + WEEK[n] + '</button>').join('');
+  let extra = '';
+  if (d.cycleType === 'weekly') extra = '<h2>星期</h2><div class="days">' + days + '</div>' + (err.weekdays ? '<p class="err">' + esc(err.weekdays) + '</p>' : '');
+  if (d.cycleType === 'monthly') extra = fieldWrap('pl-day', '每月几日（1–28）', '<input id="pl-day" data-bind="draft.monthDay" type="number" min="1" max="28" value="' + esc(d.monthDay) + '">', err.monthDay);
+  if (d.cycleType === 'interval') extra = fieldWrap('pl-n', '间隔天数（2–30）', '<input id="pl-n" data-bind="draft.interval" type="number" min="2" max="30" value="' + esc(d.interval) + '">', err.interval);
+  const remind = '<label class="choice"><input data-bind="draft.remind" data-render="1" type="checkbox"' + (d.remind ? ' checked' : '') + '> 每个发生日提醒</label>' + (d.remind ? fieldWrap('pl-time', '提醒时刻', '<input id="pl-time" data-bind="draft.remindTime" type="time" value="' + esc(d.remindTime) + '">', '') : '');
+  return stackHead(d.id ? '编辑计划' : '新建计划') + '<div class="scroller" id="scroller"><form data-act="save-plan">' +
+    fieldWrap('pl-title', '标题', inputBox('pl-title', 'draft.title', d.title, 'text', err.title), err.title) +
+    fieldWrap('pl-desc', '说明', '<textarea id="pl-desc" data-bind="draft.desc">' + esc(d.desc || '') + '</textarea>', '') +
+    fieldWrap('pl-cycle', '周期', '<select id="pl-cycle" data-bind="draft.cycleType" data-render="1"><option value="daily"' + (d.cycleType === 'daily' ? ' selected' : '') + '>每天</option><option value="weekly"' + (d.cycleType === 'weekly' ? ' selected' : '') + '>每周</option><option value="monthly"' + (d.cycleType === 'monthly' ? ' selected' : '') + '>每月</option><option value="interval"' + (d.cycleType === 'interval' ? ' selected' : '') + '>每 N 天</option></select>', '') +
+    extra +
+    fieldWrap('pl-start', '开始日期', '<input id="pl-start" data-bind="draft.start" type="date" value="' + esc(d.start) + '">', err.start) +
+    fieldWrap('pl-end', '结束日期（可空）', '<input id="pl-end" data-bind="draft.end" type="date" value="' + esc(d.end || '') + '">', err.end) +
+    remind + '<h2>执行人</h2>' + checks(assignable(me()), d.assigneeIds) + (err.assignees ? '<p class="err">' + esc(err.assignees) + '</p>' : '') +
+    '<button class="btn" type="submit">保存</button></form></div>';
+}
+
+function connectHtml() {
+  const err = state.connectError;
+  const loading = state.connectStatus === 'loading';
+  return '<div class="screen"><header class="top"><h1>LuckyTodo</h1></header><div class="scroller" id="scroller"><div class="hero" style="grid-template-columns:1fr"><div class="hero-copy"><h2>家庭待办，自己的服务器</h2><p>填写家里已经准备好的 HTTPS 地址，开始同步便签、计划和提醒。</p></div></div>' +
+    fieldWrap('server', '服务器地址', '<input id="server" data-bind="serverUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://todo.example.com" value="' + esc(state.serverUrl) + '"' + (err ? ' aria-invalid="true" aria-describedby="server-err"' : '') + '>', err) +
+    '<div class="col"><button type="button" class="btn" data-act="connect"' + (loading ? ' disabled' : '') + '>' + (loading ? '连接中' : '连接') + '</button><button type="button" class="btn secondary" data-act="fill-demo">填入演示地址</button><button type="button" class="btn secondary" data-act="demo-offline">演示连不上</button><button type="button" class="btn secondary" data-act="demo-new">演示新家庭</button></div></div></div>';
+}
+function createHtml() {
+  const d = state.draft || { familyName: '', displayName: '', username: '', password: '', password2: '' };
+  const err = state.fieldErrors;
+  return '<div class="screen">' + stackHead('创建家庭') + '<div class="scroller" id="scroller"><form data-act="create-family">' +
+    fieldWrap('c-family', '家庭名称', inputBox('c-family', 'draft.familyName', d.familyName, 'text', err.familyName), err.familyName) +
+    fieldWrap('c-name', '你的显示名', inputBox('c-name', 'draft.displayName', d.displayName, 'text', err.displayName), err.displayName) +
+    fieldWrap('c-user', '用户名', inputBox('c-user', 'draft.username', d.username, 'text', err.username), err.username) +
+    fieldWrap('c-pass', '密码', inputBox('c-pass', 'draft.password', d.password, 'password', err.password), err.password) +
+    fieldWrap('c-pass2', '确认密码', inputBox('c-pass2', 'draft.password2', d.password2, 'password', err.password2), err.password2) +
+    '<p class="meta">中国标准时间。本版不能改时区。</p><button class="btn" type="submit">创建家庭</button></form></div></div>';
+}
+function loginHtml() {
+  const buttons = state.users.map((u) => '<button type="button" class="row" data-act="login-as" data-id="' + u.id + '"><span class="title">以' + esc(u.name) + '的身份进入</span><span class="meta">' + esc(roleName(u.role) + (u.disabled ? ' · 已停用' : '')) + '</span></button>').join('');
+  const err = state.fieldErrors.login;
+  return '<div class="screen"><header class="top"><button type="button" class="iconbtn" data-act="to-connect" aria-label="返回连接">' + icon('back') + '</button><h1>进入' + esc(state.familyName) + '</h1></header><div class="scroller" id="scroller">' + buttons + '<h2>或使用密码</h2><form data-act="login">' +
+    fieldWrap('lg-user', '用户名', inputBox('lg-user', 'loginUser', state.loginUser, 'text', err), '') +
+    fieldWrap('lg-pass', '密码', inputBox('lg-pass', 'loginPass', state.loginPass, 'password', err), err) +
+    '<button class="btn" type="submit">登录</button></form><p class="meta">演示密码 family1</p></div></div>';
+}
+
+function buildInsights() {
+  const user = me();
+  const today = todayIso();
+  const members = activeUsers().filter((u) => {
+    if (user.role === 'child') return u.id === user.id;
+    if (user.role === 'adult') return u.role !== 'child';
+    return true;
+  });
+  const rows = [];
+  members.forEach((m) => {
+    let due = 0, done = 0, miss = 0;
+    for (let i = 0; i < 7; i += 1) {
+      const iso = addIso(today, -i);
+      state.plans.forEach((p) => {
+        if (!p.assigneeIds.includes(m.id) || !occursOn(p, iso)) return;
+        if (!(canSeePlan(p, user) || m.id === user.id)) return;
+        due += 1;
+        const st = entry(p, iso, m.id).status;
+        if (st === 'done') done += 1;
+        if (st === 'missed') miss += 1;
+      });
+    }
+    rows.push({ member: m, due, done, miss, rate: due ? Math.round((done / due) * 100) : 0 });
+  });
+  const visiblePlans = state.plans.filter((p) => !p.archived && canSeePlan(p, user));
+  const streakish = rows.slice().sort((a, b) => b.rate - a.rate);
+  const best = streakish[0];
+  const weak = streakish.slice().sort((a, b) => a.rate - b.rate || b.miss - a.miss)[0];
+  const openTodos = state.todos.filter((t) => canSeeTodo(t, user) && t.assignees.some((a) => a.id === user.id && a.status === 'open')).length;
+  const cards = [];
+  if (best && best.due) {
+    cards.push({ tag: '高光', title: best.member.name + ' 近 7 日完成率 ' + best.rate + '%', body: best.done + ' 次打卡完成。保持当前节奏，比催促更有效。' });
+  }
+  if (weak && weak.miss > 0) {
+    cards.push({ tag: '风险', title: weak.member.name + ' 有 ' + weak.miss + ' 次缺卡', body: '建议把提醒调到对方更方便的时段，或把计划拆成更短的动作。' });
+  }
+  if (openTodos > 0) {
+    cards.push({ tag: '待办', title: '你还有 ' + openTodos + ' 条未完成待办', body: '优先处理已过期或今天到期的事项，避免堆到周末。' });
+  }
+  if (visiblePlans.length) {
+    const multi = visiblePlans.find((p) => p.assigneeIds.length > 1);
+    if (multi) {
+      cards.push({ tag: '协作', title: '「' + multi.title + '」适合复盘', body: '多人计划看个人完成率，而不是整组是否完成。家长可在计划详情里对照反馈。' });
+    }
+  }
+  if (!cards.length) {
+    cards.push({ tag: '起步', title: '数据还不够形成趋势', body: '先坚持几天打卡，洞察会根据完成率和缺卡自动更新。' });
+  }
+  return { rows: rows.filter((r) => r.due > 0 || r.member.id === user.id), cards, openTodos, planCount: visiblePlans.length };
+}
+function insightsHtml() {
+  if (state.loading) return '<header class="top"><h1>洞察</h1></header><div class="scroller pad-tab" id="scroller">' + skeleton() + '</div>';
+  if (state.offline && !state.hydrated) return '<header class="top"><h1>洞察</h1></header><div class="scroller pad-tab" id="scroller">' + errorPage() + '</div>';
+  state.hydrated = true;
+  const data = buildInsights();
+  const bars = data.rows.length
+    ? '<div class="insight-card"><div class="tag">' + icon('insight') + ' 近 7 日完成率</div><div class="bar-list">' + data.rows.map((r) =>
+        '<div class="bar-row"><span>' + esc(r.member.name) + '</span><div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:' + r.rate + '%"></div></div><strong>' + r.rate + '%</strong></div>'
+      ).join('') + '</div></div>'
+    : '';
+  const cards = data.cards.map((c) => '<article class="insight-card"><div class="tag">' + icon('spark') + ' ' + esc(c.tag) + '</div><h3>' + esc(c.title) + '</h3><p>' + esc(c.body) + '</p></article>').join('');
+  return '<header class="top"><h1>洞察</h1><button type="button" class="iconbtn" data-act="refresh-insights" aria-label="刷新洞察">' + icon('refresh') + '</button></header><div class="scroller pad-tab" id="scroller">' + offlineBanner() +
+    '<section class="insight-hero"><p class="eyebrow">AI 家庭洞察 · 本地模拟</p><h2>这周执行得怎样</h2><p class="meta">基于近 7 日打卡、缺卡与待办，生成可读建议。不上传数据。</p><div class="stat-row" style="margin:14px 0 0"><div class="stat"><strong>' + data.planCount + '</strong><span>进行中计划</span></div><div class="stat"><strong>' + data.openTodos + '</strong><span>我的未完成</span></div><div class="stat"><strong>' + data.rows.length + '</strong><span>分析成员</span></div></div></section>' +
+    bars + '<h2>建议</h2>' + cards + '</div>';
+}
+function tabbar() {
+  const items = [['today', '今天', 'today'], ['cal', '日历', 'cal'], ['plans', '计划', 'plan'], ['notes', '便签', 'note'], ['insights', '洞察', 'insight']];
+  return '<nav class="tabs" aria-label="主要">' + items.map(([id, label, ico]) => '<button type="button" data-act="tab" data-id="' + id + '"' + (state.tab === id ? ' aria-current="page"' : '') + '>' + icon(ico) + '<span>' + label + '</span></button>').join('') + '</nav>';
+}
+
+function overlayHtml() {
+  const o = state.overlay;
+  if (!o) return '';
+  if (o.type === 'menu') {
+    const user = me();
+    const items = user.role === 'child' ? [['create-note', '便签', 'note'], ['create-todo', '待办', 'today']] : [['create-note', '便签', 'note'], ['create-todo', '待办', 'today'], ['create-event', '日程', 'cal'], ['create-plan', '计划', 'plan']];
+    return '<div class="backdrop"><div class="sheet" data-modal="1" role="dialog" aria-modal="true" aria-labelledby="menu-title"><h2 id="menu-title" style="color:var(--text);font-size:18px;letter-spacing:-0.02em;text-transform:none">新建</h2><div class="menu-list">' + items.map(([act, label, ico]) => '<button type="button" class="menu-item" data-act="' + act + '"><span class="mi">' + icon(ico) + '</span><span><strong>' + label + '</strong><span>快速添加</span></span><span class="chev">' + icon('chev') + '</span></button>').join('') + '</div></div></div>';
+  }
+  if (o.type === 'confirm') {
+    return '<div class="backdrop center"><div class="dialog" data-modal="1" role="dialog" aria-modal="true" aria-labelledby="cf-title"><h2 id="cf-title" style="margin:0 0 8px;color:var(--text);font-size:18px;letter-spacing:0">' + esc(o.title) + '</h2><p>' + esc(o.body) + '</p><div class="rowbtns"><button type="button" class="btn secondary" data-act="close-overlay">取消</button><button type="button" class="btn' + (o.danger ? ' danger' : '') + '" data-act="confirm-yes">' + esc(o.yesLabel) + '</button></div></div></div>';
+  }
+  if (o.type === 'notif') {
+    return '<div class="backdrop center"><div class="dialog" data-modal="1" role="dialog" aria-modal="true" aria-labelledby="nf-title"><h2 id="nf-title" style="margin:0 0 8px;color:var(--text);font-size:18px;letter-spacing:0">到点提醒一次</h2><p>LuckyTodo 只在你设定的时间响一次，不会再追加催办。</p><div class="col"><button type="button" class="btn" data-act="notif-allow">允许</button><button type="button" class="btn secondary" data-act="notif-deny">不允许</button></div></div></div>';
+  }
+  if (o.type === 'checkin') {
+    const text = state.draft ? state.draft.feedback || '' : '';
+    const err = state.fieldErrors.feedback;
+    return '<div class="backdrop"><div class="sheet" data-modal="1" role="dialog" aria-modal="true" aria-labelledby="ck-title"><h2 id="ck-title" style="color:var(--text);font-size:17px">完成打卡</h2><div class="field"><label for="ck-text">反馈（可空，最多 100 字）</label><textarea id="ck-text" data-bind="draft.feedback" data-render="1"' + (err ? ' aria-invalid="true" aria-describedby="ck-err"' : '') + '>' + esc(text) + '</textarea>' + (err ? '<p class="err" id="ck-err">' + esc(err) + '</p>' : '<p class="meta">' + text.length + '/100</p>') + '</div><div class="rowbtns"><button type="button" class="btn secondary" data-act="close-overlay">取消</button><button type="button" class="btn" data-act="submit-checkin">完成</button></div></div></div>';
+  }
+  return '';
+}
+function toastHtml() {
+  if (!state.toast) return '';
+  return '<div class="toast" aria-hidden="true">' + esc(state.toast) + '</div>';
+}
+
+function appHtml() {
+  if (state.route === 'connect') return connectHtml();
+  if (state.route === 'create') return createHtml();
+  if (state.route === 'login') return loginHtml();
+  const page = stackTop();
+  const map = { today: todayHtml, cal: calendarHtml, plans: plansHtml, notes: notesHtml, insights: insightsHtml, profile: profileHtml, members: membersHtml, 'member-form': memberForm, password: passwordHtml, 'note-form': noteForm, 'todo-form': todoForm, 'event-form': eventForm, 'plan-form': planForm, 'plan-detail': planDetail, 'note-detail': noteDetail, 'todo-detail': todoDetail, 'event-detail': eventDetail };
+  const name = page ? page.name : state.tab;
+  const html = (map[name] || todayHtml)();
+  return html + (page ? '' : '') + overlayHtml() + toastHtml() + (page || state.route !== 'main' ? '' : '');
+}
+
+function render() {
+  const device = document.getElementById('device');
+  const prefs = currentPrefs();
+  device.dataset.theme = prefs.theme;
+  device.dataset.font = prefs.font;
+  const scroller = document.getElementById('scroller');
+  const scrollTop = scroller ? scroller.scrollTop : 0;
+  const active = document.activeElement;
+  const focusId = active && active.closest && active.closest('#app') ? active.id : '';
+  const selStart = active ? active.selectionStart : null;
+  const selEnd = active ? active.selectionEnd : null;
+  let main = '';
+  if (state.route !== 'main') main = appHtml();
+  else {
+    const page = stackTop();
+    const map = { today: todayHtml, cal: calendarHtml, plans: plansHtml, notes: notesHtml, insights: insightsHtml, profile: profileHtml, members: membersHtml, 'member-form': memberForm, password: passwordHtml, 'note-form': noteForm, 'todo-form': todoForm, 'event-form': eventForm, 'plan-form': planForm, 'plan-detail': planDetail, 'note-detail': noteDetail, 'todo-detail': todoDetail, 'event-detail': eventDetail };
+    const name = page ? page.name : state.tab;
+    const inner = (map[name] || todayHtml)();
+    const withTabs = !page && inner.indexOf('class="tabs"') === -1;
+    main = inner + (withTabs ? tabbar() : '') + overlayHtml() + toastHtml();
+  }
+  document.getElementById('app').innerHTML = main;
+  const live = document.getElementById('live');
+  if (live) live.textContent = state.toast || '';
+  const nextScroller = document.getElementById('scroller');
+  if (nextScroller) nextScroller.scrollTop = scrollTop;
+  if (focusModal) {
+    focusModal = false;
+    const modal = document.querySelector('[data-modal="1"]');
+    const item = modal && modal.querySelector('button, input, textarea, select');
+    if (item) item.focus();
+  } else if (focusId) {
+    const el = document.getElementById(focusId);
+    if (el) {
+      el.focus();
+      if (typeof selStart === 'number' && el.setSelectionRange) {
+        try { el.setSelectionRange(selStart, selEnd); } catch (err) { /* 日期控件不支持选区 */ }
+      }
+    }
+  }
+}
+
+function toast(msg) {
+  state.toast = msg;
+  render();
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { state.toast = ''; render(); }, 2400);
+}
+function openOverlay(overlay) {
+  state.overlay = overlay;
+  focusModal = true;
+  render();
+}
+function closeOverlay() {
+  state.overlay = null;
+  if (state.draft && state.draft.feedback !== undefined && state.draft.planId) state.draft = null;
+  render();
+}
+function push(name) {
+  state.toast = '';
+  state.stack.push({ name, id: state.pendingId || null });
+  state.pendingId = null;
+  state.fieldErrors = {};
+  render();
+}
+function pop() {
+  state.draft = null;
+  state.fieldErrors = {};
+  state.overlay = null;
+  if (state.stack.length) state.stack.pop();
+  else if (state.route === 'create') state.route = 'connect';
+  render();
+}
+function setBind(path, value) {
+  const parts = path.split('.');
+  let obj = state;
+  for (let i = 0; i < parts.length - 1; i += 1) obj = obj[parts[i]];
+  obj[parts[parts.length - 1]] = value;
+  if (path.indexOf('draft.') === 0 && state.draft) state.draft.dirty = true;
+  save();
+}
+function canSave() {
+  if (state.offline || state.failNextSave) {
+    state.failNextSave = false;
+    save();
+    toast('没能保存，请重试');
+    return false;
+  }
+  return true;
+}
+function enter(user) {
+  state.sessionUserId = user.id;
+  state.route = 'main';
+  state.tab = 'today';
+  state.stack = [];
+  state.hydrated = false;
+  state.fieldErrors = {};
+  save();
+  render();
+  if (!state.notif.decision && hasFutureReminder(user)) openOverlay({ type: 'notif' });
+}
+function blankNote() {
+  return { id: null, title: '', body: '', visibility: 'private', memberIds: [], pinned: false, pickKey: 'memberIds', dirty: false };
+}
+function blankTodo(extra) {
+  const user = me();
+  return Object.assign({ id: null, title: '', notes: '', due: '', reminderKind: 'none', customReminder: '', assigneeIds: [user.id], pickKey: 'assigneeIds', sourceNoteId: null, dirty: false }, extra || {});
+}
+function blankEvent() {
+  return { id: null, title: '', allday: false, start: '', end: '', date: todayIso(), reminderKind: 'm10', participantIds: [me().id], pickKey: 'participantIds', dirty: false };
+}
+function blankPlan() {
+  return { id: null, title: '', desc: '', cycleType: 'daily', weekdays: [1, 3, 5], monthDay: 1, interval: 2, start: todayIso(), end: '', remind: false, remindTime: '20:00', assigneeIds: [me().id], pickKey: 'assigneeIds', dirty: false };
+}
+
+function reminderFromTodo(draft) {
+  if (draft.reminderKind === 'none') return null;
+  if (draft.reminderKind === 'custom') return draft.customReminder ? fromLocal(draft.customReminder) : null;
+  if (!draft.due) return null;
+  const due = fromLocal(draft.due);
+  if (draft.reminderKind === 'due') return due;
+  return new Date(new Date(due).getTime() - 3600000).toISOString();
+}
+function reminderFromEvent(draft) {
+  if (draft.reminderKind === 'none') return null;
+  if (draft.allday) {
+    const day = draft.date;
+    if (draft.reminderKind === 'day9') return at(day, 9, 0);
+    if (draft.reminderKind === 'prev9') return at(addIso(day, -1), 9, 0);
+    return null;
+  }
+  if (!draft.start) return null;
+  const start = fromLocal(draft.start);
+  if (draft.reminderKind === 'start') return start;
+  const ms = draft.reminderKind === 'm10' ? 10 * 60000 : 3600000;
+  return new Date(new Date(start).getTime() - ms).toISOString();
+}
+
+const actions = {
+  'fill-demo': function () { state.serverUrl = 'https://todo.home.local'; state.connectError = ''; render(); },
+  'demo-offline': function () { state.connectStatus = 'error'; state.connectError = '连不上家庭服务器'; render(); },
+  'demo-new': function () {
+    state.serverUrl = 'https://todo.home.local';
+    state.route = 'create';
+    state.draft = { familyName: '', displayName: '', username: '', password: '', password2: '', dirty: false };
+    state.fieldErrors = {};
+    render();
+  },
+  connect: function () {
+    const url = state.serverUrl.trim();
+    if (!url.startsWith('https://')) { state.connectError = '请填写 https 开头的地址'; state.connectStatus = 'error'; render(); return; }
+    state.connectStatus = 'loading';
+    state.connectError = '';
+    render();
+    setTimeout(() => {
+      if (url.indexOf('https://todo.home.local') !== 0) {
+        state.connectStatus = 'error';
+        state.connectError = '这个地址不是家庭待办服务';
+        render();
+        return;
+      }
+      state.connectStatus = 'idle';
+      state.route = state.sessionUserId && state.householdReady ? 'main' : 'login';
+      save();
+      render();
+    }, 400);
+  },
+  'to-connect': function () { state.route = 'connect'; render(); },
+  'create-family': function () {
+    const d = state.draft;
+    const err = {};
+    if (!d.familyName || d.familyName.length > 20) err.familyName = '请填写 1–20 字的家庭名称';
+    if (!d.displayName || d.displayName.length > 20) err.displayName = '请填写 1–20 字的显示名';
+    if (!/^[a-z0-9]{3,20}$/.test(d.username || '')) err.username = '用户名用 3–20 位小写字母或数字';
+    if (!d.password || d.password.length < 6 || d.password.length > 64) err.password = '密码需要 6–64 位';
+    if (d.password !== d.password2) err.password2 = '两次密码不一致';
+    state.fieldErrors = err;
+    if (Object.keys(err).length) { render(); return; }
+    const id = uid('u');
+    state.users = [{ id, name: d.displayName, username: d.username, password: d.password, role: 'admin', disabled: false }];
+    state.notes = []; state.todos = []; state.events = []; state.plans = [];
+    state.familyName = d.familyName;
+    state.householdReady = true;
+    state.prefs[id] = { theme: 'night', font: 'standard' };
+    state.draft = null;
+    enter(state.users[0]);
+    toast('家庭已创建');
+  },
+  'login-as': function (el) {
+    const user = userById(el.dataset.id);
+    if (!user) return;
+    if (user.disabled) { state.fieldErrors = { login: '账号已停用，请联系家庭管理员' }; state.route = 'login'; render(); return; }
+    enter(user);
+  },
+  login: function () {
+    const user = state.users.find((u) => u.username === state.loginUser.trim());
+    if (!user || user.password !== state.loginPass) { state.fieldErrors = { login: '账号或密码不正确' }; render(); return; }
+    if (user.disabled) { state.fieldErrors = { login: '账号已停用，请联系家庭管理员' }; render(); return; }
+    enter(user);
+  },
+  tab: function (el) { state.tab = el.dataset.id; state.search = state.tab === 'today' ? state.search : state.search; render(); },
+  refresh: function () {
+    state.loading = true;
+    render();
+    setTimeout(() => { state.loading = false; if (!state.offline) state.hydrated = true; render(); }, 350);
+  },
+  'clear-search': function () { state.search = ''; render(); },
+  'clear-note-search': function () { state.noteQuery = ''; render(); },
+  'open-profile': function () { push('profile'); },
+  'open-insights': function () { state.stack = []; state.tab = 'insights'; render(); },
+  'refresh-insights': function () { actions.refresh(); toast('洞察已更新'); },
+  'set-visibility': function (el) {
+    if (!state.draft) return;
+    state.draft.visibility = el.dataset.id;
+    if (state.draft.visibility !== 'specified') state.draft.memberIds = [];
+    state.draft.dirty = true;
+    render();
+  },
+
+  'open-menu': function () { openOverlay({ type: 'menu' }); },
+  'close-overlay': function () { closeOverlay(); },
+  back: function () {
+    if (state.overlay) { closeOverlay(); return; }
+    if (state.draft && state.draft.dirty) {
+      openOverlay({ type: 'confirm', title: '放弃已填写的内容？', body: '未保存的修改会丢掉。', yesLabel: '放弃', yes: 'discard-back', danger: true });
+      return;
+    }
+    if (state.route === 'create') { state.route = 'connect'; state.draft = null; render(); return; }
+    pop();
+  },
+  'discard-back': function () { state.draft = null; state.overlay = null; if (state.stack.length) state.stack.pop(); render(); },
+  'confirm-yes': function () {
+    const yes = state.overlay && state.overlay.yes;
+    const id = state.overlay && state.overlay.id;
+    state.overlay = null;
+    if (yes && actions[yes]) actions[yes]({ dataset: { id: id } });
+  },
+  'create-note': function () { state.overlay = null; state.draft = blankNote(); push('note-form'); },
+  'create-todo': function () { state.overlay = null; state.draft = blankTodo(); push('todo-form'); },
+  'create-event': function () { if (me().role === 'child') return; state.overlay = null; state.draft = blankEvent(); push('event-form'); },
+  'create-plan': function () { if (me().role === 'child') return; state.overlay = null; state.draft = blankPlan(); push('plan-form'); },
+  'open-plan': function (el) { state.pendingId = el.dataset.id; push('plan-detail'); },
+  'open-note': function (el) { state.pendingId = el.dataset.id; push('note-detail'); },
+  'open-todo': function (el) { state.pendingId = el.dataset.id; push('todo-detail'); },
+  'open-event': function (el) { state.pendingId = el.dataset.id; push('event-detail'); },
+  'edit-note': function (el) {
+    const note = state.notes.find((n) => n.id === el.dataset.id);
+    state.draft = { id: note.id, title: note.title, body: note.body, visibility: note.visibility, memberIds: note.memberIds.slice(), pinned: note.pinned, pickKey: 'memberIds', dirty: false };
+    push('note-form');
+  },
+  'edit-todo': function (el) {
+    const todo = state.todos.find((t) => t.id === el.dataset.id);
+    state.draft = { id: todo.id, title: todo.title, notes: todo.notes, due: toLocal(todo.due), reminderKind: todo.reminderKind || 'none', customReminder: todo.reminderKind === 'custom' ? toLocal(todo.reminderAt) : '', assigneeIds: todo.assignees.map((a) => a.id), pickKey: 'assigneeIds', sourceNoteId: null, dirty: false };
+    push('todo-form');
+  },
+  'edit-event': function (el) {
+    const ev = state.events.find((e) => e.id === el.dataset.id);
+    state.draft = { id: ev.id, title: ev.title, allday: ev.allday, start: ev.allday ? '' : toLocal(ev.start), end: ev.allday ? '' : toLocal(ev.end), date: shDate(ev.start), reminderKind: ev.reminderKind || 'none', participantIds: ev.participantIds.slice(), pickKey: 'participantIds', dirty: false };
+    push('event-form');
+  },
+  'edit-plan': function (el) {
+    const plan = state.plans.find((p) => p.id === el.dataset.id);
+    state.draft = { id: plan.id, title: plan.title, desc: plan.desc, cycleType: plan.cycle.type, weekdays: (plan.cycle.weekdays || [1, 3, 5]).slice(), monthDay: plan.cycle.monthDay || 1, interval: plan.cycle.n || 2, start: plan.start, end: plan.end || '', remind: Boolean(plan.reminder), remindTime: plan.reminder || '20:00', assigneeIds: plan.assigneeIds.slice(), pickKey: 'assigneeIds', dirty: false };
+    push('plan-form');
+  },
+  'save-note': function () {
+    const d = state.draft;
+    const err = {};
+    if (!d.title || d.title.length > 40) err.title = '标题需要 1–40 字';
+    if ((d.body || '').length > 1000) err.body = '正文最多 1000 字';
+    if (d.visibility === 'specified' && !d.memberIds.length) err.title = err.title || '请选择至少一位成员';
+    state.fieldErrors = err;
+    if (Object.keys(err).length) { render(); return; }
+    if (!canSave()) return;
+    if (d.id) {
+      const note = state.notes.find((n) => n.id === d.id);
+      Object.assign(note, { title: d.title.trim(), body: d.body.trim(), visibility: d.visibility, memberIds: d.memberIds.slice(), updatedAt: new Date().toISOString() });
+    } else {
+      state.notes.unshift({ id: uid('n'), title: d.title.trim(), body: (d.body || '').trim(), authorId: me().id, visibility: d.visibility, memberIds: d.memberIds.slice(), pinned: false, linkedTodoId: null, updatedAt: new Date().toISOString() });
+    }
+    state.draft = null;
+    save();
+    pop();
+    toast('已保存便签');
+  },
+  'save-todo': function () {
+    const d = state.draft;
+    const err = {};
+    if (!d.title || d.title.length > 80) err.title = '标题需要 1–80 字';
+    if ((d.notes || '').length > 500) err.notes = '补充说明最多 500 字';
+    const ids = me().role === 'child' ? [me().id] : d.assigneeIds.slice();
+    if (!ids.length) err.assignees = '至少指定一名执行人';
+    const reminderAt = reminderFromTodo(d);
+    if (d.reminderKind === 'custom') {
+      if (!d.customReminder) err.customReminder = '请填写提醒时间';
+      else if (new Date(reminderAt).getTime() <= Date.now()) err.customReminder = '提醒时间要晚于现在';
+    }
+    state.fieldErrors = err;
+    if (Object.keys(err).length) { render(); return; }
+    if (!canSave()) return;
+    const due = d.due ? fromLocal(d.due) : null;
+    if (d.id) {
+      const todo = state.todos.find((t) => t.id === d.id);
+      const prev = todo.assignees;
+      todo.title = d.title.trim();
+      todo.notes = (d.notes || '').trim();
+      todo.due = due;
+      todo.reminderKind = d.reminderKind;
+      todo.reminderAt = reminderAt;
+      todo.assignees = ids.map((id) => prev.find((a) => a.id === id) || { id, status: 'open', doneAt: null });
+    } else {
+      const id = uid('t');
+      state.todos.unshift({ id, title: d.title.trim(), notes: (d.notes || '').trim(), creatorId: me().id, due, reminderKind: d.reminderKind, reminderAt, assignees: ids.map((uid_) => ({ id: uid_, status: 'open', doneAt: null })) });
+      if (d.sourceNoteId) {
+        const note = state.notes.find((n) => n.id === d.sourceNoteId);
+        if (note) note.linkedTodoId = id;
+      }
+    }
+    state.draft = null;
+    save();
+    pop();
+    toast(d.sourceNoteId ? '已转为待办' : '已保存待办');
+  },
+  'save-event': function () {
+    const d = state.draft;
+    const err = {};
+    if (!d.title || d.title.length > 80) err.title = '标题需要 1–80 字';
+    if (d.allday) { if (!d.date) err.date = '请选择日期'; }
+    else {
+      if (!d.start || !d.end) err.start = '请填写开始和结束时间';
+      else if (fromLocal(d.end) <= fromLocal(d.start)) err.end = '结束时间要晚于开始时间';
+    }
+    if (!d.participantIds.length) err.participants = '至少一位参与人';
+    state.fieldErrors = err;
+    if (Object.keys(err).length) { render(); return; }
+    if (!canSave()) return;
+    const start = d.allday ? at(d.date, 0, 0) : fromLocal(d.start);
+    const end = d.allday ? at(d.date, 23, 59) : fromLocal(d.end);
+    const payload = { title: d.title.trim(), allday: Boolean(d.allday), start, end, participantIds: d.participantIds.slice(), reminderKind: d.reminderKind, reminderAt: reminderFromEvent(d) };
+    if (d.id) Object.assign(state.events.find((ev) => ev.id === d.id), payload);
+    else state.events.unshift(Object.assign({ id: uid('e'), creatorId: me().id }, payload));
+    state.draft = null;
+    save();
+    pop();
+    toast('已保存日程');
+  },
+  'save-plan': function () {
+    const d = state.draft;
+    const err = {};
+    if (!d.title || d.title.length > 40) err.title = '标题需要 1–40 字';
+    if ((d.desc || '').length > 500) err.desc = '说明最多 500 字';
+    if (!d.start) err.start = '请选择开始日期';
+    if (d.end && d.end < d.start) err.end = '结束日期不能早于开始日期';
+    if (d.cycleType === 'weekly' && !d.weekdays.length) err.weekdays = '请至少选择一个星期';
+    const monthDay = Number(d.monthDay);
+    const interval = Number(d.interval);
+    if (d.cycleType === 'monthly' && (monthDay < 1 || monthDay > 28)) err.monthDay = '请选择 1–28 日';
+    if (d.cycleType === 'interval' && (interval < 2 || interval > 30)) err.interval = '间隔要在 2–30 天';
+    if (!d.assigneeIds.length) err.assignees = '至少指定一名执行人';
+    state.fieldErrors = err;
+    if (Object.keys(err).length) { render(); return; }
+    if (!canSave()) return;
+    const cycle = { type: d.cycleType };
+    if (d.cycleType === 'weekly') cycle.weekdays = d.weekdays.map(Number);
+    if (d.cycleType === 'monthly') cycle.monthDay = monthDay;
+    if (d.cycleType === 'interval') cycle.n = interval;
+    const reminder = d.remind ? d.remindTime : '';
+    if (d.id) {
+      const plan = state.plans.find((p) => p.id === d.id);
+      if (JSON.stringify(plan.cycle) !== JSON.stringify(cycle)) {
+        plan.prevCycle = plan.cycle;
+        plan.cycleEffective = addIso(todayIso(), 1);
+      }
+      plan.title = d.title.trim();
+      plan.desc = (d.desc || '').trim();
+      plan.cycle = cycle;
+      plan.start = d.start;
+      plan.end = d.end || '';
+      plan.reminder = reminder;
+      plan.assigneeIds = d.assigneeIds.slice();
+    } else {
+      state.plans.unshift({ id: uid('p'), title: d.title.trim(), desc: (d.desc || '').trim(), creatorId: me().id, cycle, prevCycle: null, cycleEffective: null, start: d.start, end: d.end || '', reminder, assigneeIds: d.assigneeIds.slice(), archived: false, archivedAt: null, records: {} });
+    }
+    state.draft = null;
+    save();
+    pop();
+    toast('已保存计划');
+  },
+  'toggle-pin': function (el) {
+    const note = state.notes.find((n) => n.id === el.dataset.id);
+    if (!note) return;
+    note.pinned = !note.pinned;
+    save();
+    toast(note.pinned ? '已置顶' : '已取消置顶');
+  },
+  'convert-note': function (el) {
+    const note = state.notes.find((n) => n.id === el.dataset.id);
+    state.draft = blankTodo({ title: note.title, sourceNoteId: note.id });
+    push('todo-form');
+  },
+  'ask-delete-note': function (el) { openOverlay({ type: 'confirm', title: '删除这条便签？', body: '删除后不能恢复。已经转出的待办会保留。', yesLabel: '删除', yes: 'do-delete-note', id: el.dataset.id, danger: true }); },
+  'do-delete-note': function (el) {
+    state.notes = state.notes.filter((n) => n.id !== el.dataset.id);
+    save();
+    pop();
+    toast('已删除便签');
+  },
+  'ask-delete-todo': function (el) { openOverlay({ type: 'confirm', title: '删除这条待办？', body: '执行人将不再看到它。', yesLabel: '删除', yes: 'do-delete-todo', id: el.dataset.id, danger: true }); },
+  'do-delete-todo': function (el) {
+    state.todos = state.todos.filter((t) => t.id !== el.dataset.id);
+    save();
+    pop();
+    toast('已删除待办');
+  },
+  'ask-delete-event': function (el) { openOverlay({ type: 'confirm', title: '删除这个日程？', body: '参与人的日历里也会去掉它。', yesLabel: '删除', yes: 'do-delete-event', id: el.dataset.id, danger: true }); },
+  'do-delete-event': function (el) {
+    state.events = state.events.filter((ev) => ev.id !== el.dataset.id);
+    save();
+    pop();
+    toast('已删除日程');
+  },
+  'ask-archive': function (el) { openOverlay({ type: 'confirm', title: '归档计划', body: '归档后不再生成新的打卡，已有记录会保留。', yesLabel: '归档计划', yes: 'do-archive', id: el.dataset.id, danger: true }); },
+  'do-archive': function (el) {
+    const plan = state.plans.find((p) => p.id === el.dataset.id);
+    plan.archived = true;
+    plan.archivedAt = new Date().toISOString();
+    save();
+    toast('已归档');
+    render();
+  },
+  'open-checkin': function (el) {
+    state.draft = { planId: el.dataset.id, feedback: '', dirty: false };
+    state.fieldErrors = {};
+    openOverlay({ type: 'checkin' });
+  },
+  'submit-checkin': function () {
+    const text = (state.draft.feedback || '').trim();
+    if (text.length > 100) { state.fieldErrors = { feedback: '反馈最多 100 字' }; render(); return; }
+    if (!canSave()) return;
+    const plan = state.plans.find((p) => p.id === state.draft.planId);
+    plan.records[todayIso() + '|' + me().id] = { status: 'done', feedback: text, at: new Date().toISOString() };
+    state.draft = null;
+    state.overlay = null;
+    save();
+    toast('已打卡');
+  },
+  'toggle-my-todo': function (el) {
+    if (!canSave()) return;
+    const todo = state.todos.find((t) => t.id === el.dataset.id);
+    const mine = todo.assignees.find((a) => a.id === me().id);
+    if (!mine) return;
+    mine.status = mine.status === 'done' ? 'open' : 'done';
+    mine.doneAt = mine.status === 'done' ? new Date().toISOString() : null;
+    save();
+    toast(mine.status === 'done' ? '已完成' : '已改回未完成');
+  },
+  'toggle-member': function (el) {
+    const key = state.draft.pickKey;
+    const arr = state.draft[key];
+    const idx = arr.indexOf(el.dataset.id);
+    if (idx >= 0) arr.splice(idx, 1); else arr.push(el.dataset.id);
+    state.draft.dirty = true;
+    render();
+  },
+  'toggle-weekday': function (el) {
+    const day = Number(el.dataset.id);
+    const arr = state.draft.weekdays.map(Number);
+    const idx = arr.indexOf(day);
+    if (idx >= 0) arr.splice(idx, 1); else arr.push(day);
+    state.draft.weekdays = arr;
+    state.draft.dirty = true;
+    render();
+  },
+  'expand-history': function (el) {
+    state.expandedHistory = state.expandedHistory === el.dataset.id ? null : el.dataset.id;
+    render();
+  },
+  'cal-prev': function () {
+    const [y, m] = state.calMonth.split('-').map(Number);
+    const d = m === 1 ? (y - 1) + '-12' : y + '-' + pad(m - 1);
+    state.calMonth = d;
+    render();
+  },
+  'cal-next': function () {
+    const [y, m] = state.calMonth.split('-').map(Number);
+    state.calMonth = m === 12 ? (y + 1) + '-01' : y + '-' + pad(m + 1);
+    render();
+  },
+  'cal-today': function () { state.calMonth = todayIso().slice(0, 7); state.calSelected = todayIso(); render(); },
+  'cal-day': function (el) { state.calSelected = el.dataset.id; render(); },
+  'plan-segment': function (el) { state.planSegment = el.dataset.id; render(); },
+  theme: function (el) { currentPrefs().theme = el.dataset.id; save(); render(); },
+  font: function (el) { currentPrefs().font = el.dataset.id; save(); render(); },
+  logout: function () { state.sessionUserId = null; state.route = 'login'; state.stack = []; state.draft = null; save(); render(); },
+  'ask-server': function () { openOverlay({ type: 'confirm', title: '更换服务器', body: '更换后需要重新登录。', yesLabel: '更换', yes: 'do-server', danger: true }); },
+  'do-server': function () { state.sessionUserId = null; state.route = 'connect'; state.stack = []; save(); render(); },
+  'open-password': function () { state.draft = { current: '', next: '', again: '', dirty: false }; push('password'); },
+  'save-password': function () {
+    const d = state.draft;
+    const err = {};
+    if (d.current !== me().password) err.current = '当前密码不正确';
+    if (!d.next || d.next.length < 6 || d.next.length > 64) err.next = '新密码需要 6–64 位';
+    if (d.next !== d.again) err.again = '两次密码不一致';
+    state.fieldErrors = err;
+    if (Object.keys(err).length) { render(); return; }
+    if (!canSave()) return;
+    me().password = d.next;
+    state.draft = null;
+    save();
+    pop();
+    toast('密码已更新');
+  },
+  'open-members': function () { push('members'); },
+  'open-member': function (el) {
+    const u = userById(el.dataset.id);
+    state.draft = { id: u.id, name: u.name, username: u.username, password: '', role: u.role, disabled: u.disabled, isNew: false, dirty: false };
+    push('member-form');
+  },
+  'new-member': function () {
+    state.draft = { id: null, name: '', username: '', password: '', role: 'adult', disabled: false, isNew: true, dirty: false };
+    push('member-form');
+  },
+  'save-member': function () {
+    const d = state.draft;
+    const err = {};
+    if (!d.name || d.name.length > 20) err.name = '显示名需要 1–20 字';
+    if (!/^[a-z0-9]{3,20}$/.test(d.username || '')) err.username = '用户名用 3–20 位小写字母或数字';
+    if (state.users.some((u) => u.username === d.username && u.id !== d.id)) err.username = '这个用户名已经有人用了';
+    if (d.isNew && (!d.password || d.password.length < 6)) err.password = '初始密码需要 6–64 位';
+    if (!d.isNew && d.password && d.password.length < 6) err.password = '新密码需要 6–64 位';
+    state.fieldErrors = err;
+    if (Object.keys(err).length) { render(); return; }
+    if (!canSave()) return;
+    if (d.isNew) state.users.push({ id: uid('u'), name: d.name.trim(), username: d.username, password: d.password, role: d.role, disabled: false });
+    else {
+      const u = userById(d.id);
+      u.name = d.name.trim();
+      u.username = d.username;
+      if (d.id !== me().id) u.role = d.role;
+      if (d.password) u.password = d.password;
+    }
+    state.draft = null;
+    save();
+    pop();
+    toast('已保存成员');
+  },
+  'ask-disable': function (el) { openOverlay({ type: 'confirm', title: '停用这个成员？', body: '停用后不能登录，已有打卡记录会保留。', yesLabel: '停用', yes: 'do-disable', id: el.dataset.id, danger: true }); },
+  'do-disable': function (el) {
+    const u = userById(el.dataset.id);
+    u.disabled = true;
+    if (state.draft && state.draft.id === u.id) state.draft.disabled = true;
+    save();
+    toast('已停用');
+  },
+  'enable-member': function (el) {
+    const u = userById(el.dataset.id);
+    u.disabled = false;
+    if (state.draft) state.draft.disabled = false;
+    save();
+    toast('已恢复');
+  },
+  'toggle-offline': function () { state.offline = !state.offline; save(); toast(state.offline ? '已模拟连接中断' : '已恢复连接'); },
+  'toggle-fail': function () { state.failNextSave = !state.failNextSave; save(); render(); },
+  'ask-reset': function () { openOverlay({ type: 'confirm', title: '重置演示数据？', body: '这台浏览器里的修改会清掉，示例家庭会回来。', yesLabel: '重置', yes: 'do-reset', danger: true }); },
+  'do-reset': function () { localStorage.removeItem(KEY); state = seed(); render(); toast('已恢复示例家庭'); },
+  'goto-today': function () { state.stack = []; state.tab = 'today'; state.route = 'main'; render(); },
+  'notif-allow': function () { state.notif.decision = 'granted'; state.overlay = null; save(); toast('到点会提醒一次'); },
+  'notif-deny': function () { state.notif.decision = 'denied'; state.overlay = null; save(); render(); },
+  'open-notif': function () { openOverlay({ type: 'notif' }); },
+  'dismiss-banner': function () { state.notif.dismissedAt = Date.now(); save(); render(); }
+};
+
+document.getElementById('app').addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el || el.tagName === 'FORM') {
+    if (e.target.classList && e.target.classList.contains('backdrop')) closeOverlay();
+    return;
+  }
+  const act = el.dataset.act;
+  if (el.closest('form') && el.type === 'submit') return;
+  if (actions[act]) actions[act](el, e);
+});
+document.getElementById('app').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const act = e.target.dataset.act;
+  if (actions[act]) actions[act](e.target, e);
+});
+document.getElementById('app').addEventListener('input', (e) => {
+  const bind = e.target.dataset.bind;
+  if (!bind) return;
+  setBind(bind, e.target.type === 'checkbox' ? e.target.checked : e.target.value);
+  if (e.target.dataset.render === '1') render();
+});
+document.getElementById('app').addEventListener('change', (e) => {
+  const bind = e.target.dataset.bind;
+  if (!bind) return;
+  setBind(bind, e.target.type === 'checkbox' ? e.target.checked : e.target.value);
+  if (e.target.dataset.render === '1') render();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.overlay) { e.preventDefault(); closeOverlay(); return; }
+  if (e.key !== 'Tab' || !state.overlay) return;
+  const root = document.querySelector('[data-modal="1"]');
+  if (!root) return;
+  const items = Array.from(root.querySelectorAll('button, input, textarea, select')).filter((el) => !el.disabled);
+  if (!items.length) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+document.addEventListener('pointerdown', (e) => {
+  const scroller = document.getElementById('scroller');
+  if (!scroller || !scroller.contains(e.target) || scroller.scrollTop > 0) return;
+  if (e.target.closest('button, input, textarea, select, a, label')) return;
+  pull = { y: e.clientY, id: e.pointerId };
+});
+document.addEventListener('pointerup', (e) => {
+  if (!pull || pull.id !== e.pointerId) return;
+  const dy = e.clientY - pull.y;
+  pull = null;
+  if (dy > 72 && state.route === 'main' && !stackTop() && (state.tab === 'today' || state.tab === 'notes' || state.tab === 'plans' || state.tab === 'cal' || state.tab === 'insights')) actions.refresh();
+});
+
+state = load();
+render();
+window.__LT = { get state() { return state; }, todayIso, addIso };
+  </script>
+</body>
+</html>
