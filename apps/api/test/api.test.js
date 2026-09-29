@@ -137,4 +137,35 @@ describe('LuckyTodo API', () => {
     assert.equal(login.status, 200);
     assert.equal(login.json.member.role, 'child');
   });
+
+  it('saves AI settings and runs rule-based insight', async () => {
+    process.env.LUCKYTODO_INSIGHT_NO_RATELIMIT = '1';
+    const put = await req(base, 'PUT', '/api/settings/ai', {
+      token,
+      body: {
+        enabled: false,
+        baseUrl: 'https://example.invalid/v1',
+        model: 'test-model',
+        apiKey: 'sk-test',
+      },
+    });
+    assert.equal(put.status, 200);
+    assert.equal(put.json.settings.enabled, false);
+    assert.equal(put.json.settings.apiKeySet, true);
+    assert.equal(put.json.settings.apiKey, '********');
+
+    const get = await req(base, 'GET', '/api/settings/ai', { token });
+    assert.equal(get.status, 200);
+    assert.equal(get.json.settings.model, 'test-model');
+
+    const run = await req(base, 'POST', '/api/insights/run', { token });
+    assert.equal(run.status, 200);
+    assert.ok(run.json.report);
+    assert.ok(Array.isArray(run.json.report.cards));
+    assert.ok(run.json.report.cards.length >= 1);
+
+    const latest = await req(base, 'GET', '/api/insights/latest', { token });
+    assert.equal(latest.status, 200);
+    assert.equal(latest.json.report.id, run.json.report.id);
+  });
 });

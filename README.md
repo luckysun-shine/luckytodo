@@ -40,10 +40,14 @@ npm run test:api
 ## 飞牛 fnOS 部署
 
 ```bash
-cd deploy && docker compose up -d --build
+cd deploy && cp -n .env.example .env
+# 按需编辑 .env 中的 AI_* 变量
+docker compose up -d --build
 ```
 
 用飞牛反向代理把 **HTTPS 域名** 转到容器 `8787`，手机「连接服务器」填写该地址。
+
+**AI 洞察**：容器内每 12 小时跑批并缓存；管理员可在 App「我的」或浏览器 `/admin.html` 配置模型。说明见 [`apps/api/INSIGHTS.md`](./apps/api/INSIGHTS.md)。**当前不提供完整管理后台**，轻量配置页即可。
 
 ## 打 IPA（macOS + Xcode / 全能签）
 
