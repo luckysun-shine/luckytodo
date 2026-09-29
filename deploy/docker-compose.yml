@@ -1,6 +1,8 @@
 services:
   luckytodo-api:
-    build: ../apps/api
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
     container_name: luckytodo-api
     restart: unless-stopped
     ports:
@@ -8,6 +10,14 @@ services:
     environment:
       PORT: "8787"
       LUCKYTODO_DATA: /data
+      LUCKYTODO_WEB: /app/apps/web
+      # AI 洞察（可选；也可在浏览器打开 /admin.html 或 App「我的」由管理员覆盖）
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-deepseek-chat}
+      # 默认 12 小时 = 43200000 ms
+      INSIGHT_INTERVAL_MS: ${INSIGHT_INTERVAL_MS:-43200000}
     volumes:
       - luckytodo_data:/data
 

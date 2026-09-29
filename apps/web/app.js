@@ -1317,6 +1317,118 @@ async function renderPlanDetail() {
 }
 
 async function renderInsightsBody() {
+  const wrap = h('div');
+  const familyMode = api.isFamilyMode();
+
+  if (familyMode) {
+    try {
+      const data = await api.api('GET', '/api/insights/latest');
+      const report = data.report;
+      if (!report) {
+        appendNodes(
+          wrap,
+          h('div', { className: 'card' }, [
+            h('p', { className: 'eyebrow', text: '家庭服务器 · AI 洞察' }),
+            h('h3', { text: '还没有生成报告' }),
+            h('p', {
+              className: 'muted',
+              text: '服务器每 12 小时自动跑一次。管理员可在「我的」配置模型，或打开 /admin.html。',
+            }),
+          ]),
+          emptyState('洞察还在等第一次运行', '先打卡几天，或让管理员手动生成一次。', '去今天', () => {
+            state.tab = 'today';
+            render();
+          })
+        );
+        return wrap;
+      }
+
+      const stats = report.stats || {};
+      const members = stats.memberStats || [];
+      const avgRates = members.filter((m) => m.rate != null).map((m) => m.rate);
+      const rate = avgRates.length
+        ? Math.round(avgRates.reduce((a, b) => a + b, 0) / avgRates.length)
+        : 0;
+
+      appendNodes(
+        wrap,
+        h('div', { className: 'card' }, [
+          h('p', {
+            className: 'eyebrow',
+            text: `近 7 日 · ${report.status === 'ok' ? 'AI' : report.status === 'fallback' ? '规则兜底' : '规则'} · ${fmt(report.generatedAt)}`,
+          }),
+          h('div', { className: 'stat', text: `${rate}%` }),
+          h('div', { className: 'bar' }, [h('i', { style: `width:${rate}%` })]),
+          h('p', {
+            style: 'margin-top:10px',
+            className: 'muted',
+            text: report.model
+              ? `模型 ${report.model}${report.error ? ` · ${report.error}` : ''}`
+              : report.error || '基于家庭服务器缓存结果',
+          }),
+        ])
+      );
+
+      for (const m of members.filter((x) => x.checkinTotal > 0 || x.openTodoCount > 0)) {
+        appendNodes(
+          wrap,
+          h('div', { className: 'card row' }, [
+            h('div', { className: 'grow' }, [
+              h('h3', { text: m.name }),
+              h('p', {
+                text: m.rate != null
+                  ? `完成率 ${m.rate}% · 未完成待办 ${m.openTodoCount}`
+                  : `未完成待办 ${m.openTodoCount}`,
+              }),
+            ]),
+          ])
+        );
+      }
+
+      for (const c of report.cards || []) {
+        appendNodes(
+          wrap,
+          h('div', { className: 'card' }, [
+            h('p', { className: 'eyebrow', text: c.tag || '建议' }),
+            h('h3', { text: c.title }),
+            h('p', { text: c.body }),
+          ])
+        );
+      }
+
+      const me = api.getMember();
+      if (me?.role === 'admin' || me?.role === 'parent') {
+        appendNodes(
+          wrap,
+          h('button', {
+            className: 'btn secondary block',
+            style: 'margin-top:8px',
+            text: '手动刷新洞察',
+            onClick: async () => {
+              try {
+                await api.api('POST', '/api/insights/run');
+                toast('洞察已更新');
+                render();
+              } catch (e) {
+                toast(e.message);
+              }
+            },
+          })
+        );
+      }
+      return wrap;
+    } catch (e) {
+      appendNodes(
+        wrap,
+        h('div', { className: 'card' }, [
+          h('h3', { text: '暂时读不到服务器洞察' }),
+          h('p', { className: 'muted', text: e.message || '将回退为本机规则统计' }),
+        ])
+      );
+    }
+  }
+
+  // Local / offline rule-based fallback
   const checkins = await listActive('checkin');
   const plans = await listActive('plan');
   const todos = await listActive('todo');
@@ -1326,12 +1438,11 @@ async function renderInsightsBody() {
   const done = recent.filter((c) => c.payload.status === 'done').length;
   const rate = recent.length ? Math.round((done / Math.max(recent.length, 1)) * 100) : 0;
   const openTodos = todos.filter((t) => (t.payload.completions || {})[me?.id || 'guest'] !== 'done');
-  const wrap = h('div');
 
   appendNodes(
     wrap,
     h('div', { className: 'card' }, [
-      h('p', { className: 'eyebrow', text: '近 7 日 · 本机数据' }),
+      h('p', { className: 'eyebrow', text: familyMode ? '本机回退 · 近 7 日' : '近 7 日 · 本机数据' }),
       h('div', { className: 'stat', text: `${rate}%` }),
       h('div', { className: 'bar' }, [h('i', { style: `width:${rate}%` })]),
       h('p', {
@@ -1372,7 +1483,7 @@ async function renderInsightsBody() {
   if (!recent.length && !openTodos.length) {
     appendNodes(
       wrap,
-      emptyState('洞察还在等数据', '先创建计划并打卡，分析只在本机完成，不会上传第三方。', '去今天', () => {
+      emptyState('洞察还在等数据', '先创建计划并打卡。连接家庭服务器并配置 AI 后，可每 12 小时自动生成建议。', '去今天', () => {
         state.tab = 'today';
         render();
       })
@@ -1469,6 +1580,87 @@ async function renderMeBody() {
         h('p', { className: 'muted', style: 'margin-top:8px', text: api.apiBase() }),
       ])
     );
+
+    if (me?.role === 'admin') {
+      let aiSettings = null;
+      try {
+        const res = await api.api('GET', '/api/settings/ai');
+        aiSettings = res.settings;
+      } catch {
+        aiSettings = null;
+      }
+      const baseInput = h('input', {
+        type: 'url',
+        placeholder: 'https://api.deepseek.com/v1',
+        value: aiSettings?.baseUrl || '',
+      });
+      const modelInput = h('input', {
+        type: 'text',
+        placeholder: 'deepseek-chat',
+        value: aiSettings?.model || '',
+      });
+      const keyInput = h('input', {
+        type: 'password',
+        placeholder: aiSettings?.apiKeySet ? '已保存密钥（留空不修改）' : 'API Key',
+        value: '',
+      });
+      const enabledInput = h('input', { type: 'checkbox' });
+      if (aiSettings?.enabled) enabledInput.checked = true;
+
+      appendNodes(
+        wrap,
+        h('div', { className: 'section-label', text: 'AI 洞察（服务器）' }),
+        h('div', { className: 'card stack' }, [
+          h('p', {
+            className: 'muted',
+            text: '每 12 小时在 NAS 上跑一次并缓存结果。也可在电脑浏览器打开 /admin.html。',
+          }),
+          h('label', { className: 'row', style: 'gap:8px;margin-top:8px' }, [
+            enabledInput,
+            h('span', { text: '启用 AI 定时洞察' }),
+          ]),
+          h('div', { className: 'field' }, [h('label', { text: 'API Base URL' }), baseInput]),
+          h('div', { className: 'field' }, [h('label', { text: '模型' }), modelInput]),
+          h('div', { className: 'field' }, [h('label', { text: 'API Key' }), keyInput]),
+          h('button', {
+            className: 'btn secondary block',
+            style: 'margin-top:12px',
+            text: '保存 AI 配置',
+            onClick: async () => {
+              try {
+                await api.api('PUT', '/api/settings/ai', {
+                  body: {
+                    enabled: enabledInput.checked,
+                    baseUrl: baseInput.value.trim(),
+                    model: modelInput.value.trim(),
+                    apiKey: keyInput.value,
+                  },
+                });
+                toast('AI 配置已保存');
+                keyInput.value = '';
+                render();
+              } catch (e) {
+                toast(e.message);
+              }
+            },
+          }),
+          h('button', {
+            className: 'btn ghost block',
+            text: '立即生成洞察',
+            onClick: async () => {
+              try {
+                await api.api('POST', '/api/insights/run');
+                toast('洞察已生成');
+                state.tab = 'insights';
+                render();
+              } catch (e) {
+                toast(e.message);
+              }
+            },
+          }),
+        ])
+      );
+    }
   } else {
     appendNodes(
       wrap,

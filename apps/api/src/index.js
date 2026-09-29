@@ -11,11 +11,23 @@ import {
   parseMultipart,
   canSeeEntity,
 } from './lib/util.js';
+import {
+  ensureInsightTables,
+  getAiSettings,
+  saveAiSettings,
+  latestInsightReport,
+  publicInsightReport,
+  runInsightJob,
+  startInsightScheduler,
+  buildInsightStats,
+} from './lib/insights.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer } from 'node:http';
 import { URL } from 'node:url';
 import { tryServeStatic } from './lib/static.js';
+
+ensureInsightTables();
 
 const PORT = Number(process.env.PORT || 8787);
 const MAX_FILE = 20 * 1024 * 1024;
@@ -171,8 +183,83 @@ async function handle(req, res) {
         ok: true,
         initialized: familyCount > 0,
         time: nowIso(),
-        version: '0.3.0',
+        version: '0.4.0',
+        insights: true,
       });
+    }
+
+    if (req.method === 'GET' && pathname === '/api/settings/ai') {
+      const auth = getAuth(req);
+      if (!auth) return json(res, 401, { error: '未登录' });
+      if (auth.member.role !== 'admin') return json(res, 403, { error: '仅管理员可查看 AI 配置' });
+      return json(res, 200, { settings: getAiSettings(auth.familyId) });
+    }
+
+    if (req.method === 'PUT' && pathname === '/api/settings/ai') {
+      const auth = getAuth(req);
+      if (!auth) return json(res, 401, { error: '未登录' });
+      if (auth.member.role !== 'admin') return json(res, 403, { error: '仅管理员可修改 AI 配置' });
+      const body = await readJson(req);
+      const settings = saveAiSettings(
+        auth.familyId,
+        {
+          enabled: body.enabled,
+          baseUrl: body.baseUrl,
+          apiKey: body.apiKey,
+          clearApiKey: !!body.clearApiKey,
+          model: body.model,
+        },
+        auth.member.id
+      );
+      return json(res, 200, { settings });
+    }
+
+    if (req.method === 'GET' && pathname === '/api/insights/latest') {
+      const auth = getAuth(req);
+      if (!auth) return json(res, 401, { error: '未登录' });
+      const row = latestInsightReport(auth.familyId);
+      if (!row) {
+        // soft empty: return rule snapshot without persisting when never run
+        const stats = buildInsightStats(auth.familyId);
+        return json(res, 200, {
+          report: null,
+          preview: {
+            stats,
+            cards: [],
+            status: 'empty',
+            generatedAt: null,
+          },
+        });
+      }
+      const report = publicInsightReport(row);
+      // children only see their own member stats slice
+      if (auth.member.role === 'child' && report?.stats?.memberStats) {
+        report.stats = {
+          ...report.stats,
+          memberStats: report.stats.memberStats.filter((m) => m.memberId === auth.member.id),
+        };
+      }
+      return json(res, 200, { report });
+    }
+
+    if (req.method === 'POST' && pathname === '/api/insights/run') {
+      const auth = getAuth(req);
+      if (!auth) return json(res, 401, { error: '未登录' });
+      if (auth.member.role !== 'admin' && auth.member.role !== 'parent') {
+        return json(res, 403, { error: '仅家长或管理员可手动生成洞察' });
+      }
+      const last = latestInsightReport(auth.familyId);
+      if (last) {
+        const age = Date.now() - new Date(last.generated_at).getTime();
+        if (age < 60 * 60 * 1000 && process.env.LUCKYTODO_INSIGHT_NO_RATELIMIT !== '1') {
+          return json(res, 429, {
+            error: '手动刷新过于频繁，请约 1 小时后再试，或等待 12 小时定时任务',
+            report: publicInsightReport(last),
+          });
+        }
+      }
+      const report = await runInsightJob(auth.familyId);
+      return json(res, 200, { report });
     }
 
     if (req.method === 'POST' && pathname === '/api/setup/family') {
@@ -610,6 +697,7 @@ const server = createServer((req, res) => {
 if (process.env.LUCKYTODO_NO_LISTEN !== '1') {
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`LuckyTodo API listening on :${PORT}`);
+    startInsightScheduler();
   });
 }
 
