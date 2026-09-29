@@ -16,6 +16,8 @@
 
 ## Xcode 配置（首次）
 
+打 IPA / 全能签安装的完整流程见 [`PACKAGING.md`](./PACKAGING.md)。
+
 1. `npm install && npx cap sync ios && npx cap open ios`
 2. 选中 **App** 与 **LuckyTodoWidgetExtension**，Signing Team 设为同一团队（全能签同证书）
 3. 确认 Capabilities → App Groups 包含 `group.family.luckytodo.app`（已写在 entitlements）
