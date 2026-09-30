@@ -171,7 +171,10 @@ button { cursor: pointer; }
   overscroll-behavior: contain;
   scroll-behavior: smooth;
 }
-.dash-scroll { padding-top: calc(14px + env(safe-area-inset-top)); }
+.dash .empty { padding: 8px 4px 4px; }
+.dash .empty .empty-mark { width: 64px; height: 64px; margin: 0 auto 10px; }
+.dash .empty .empty-mark svg { width: 30px; height: 30px; }
+.dash .empty h3 { font-size: 1.05rem; margin-bottom: 6px; }
 
 .banner {
   margin: 0 var(--space-4) var(--space-3);
@@ -294,8 +297,8 @@ button { cursor: pointer; }
   position: absolute;
   width: 4px;
   height: 8px;
-  border-right: 2px solid #fff;
-  border-bottom: 2px solid #fff;
+  border-right: 2px solid #07323c;
+  border-bottom: 2px solid #07323c;
   transform: rotate(45deg) translate(-1px, -2px);
   z-index: 1;
 }
