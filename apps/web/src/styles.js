@@ -18,7 +18,7 @@ export const css = `
   --tap: 48px;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
 body {
   min-height: 100dvh;
   background: #121212;
@@ -63,7 +63,9 @@ button { cursor: pointer; }
   --glow: transparent;
   max-width: 430px;
   margin: 0 auto;
-  min-height: 100dvh;
+  height: 100dvh;
+  max-height: 100dvh;
+  min-height: 0;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -156,7 +158,7 @@ button { cursor: pointer; }
 
 .scroller {
   flex: 1; min-height: 0; overflow: auto;
-  padding: var(--space-2) var(--space-5) calc(108px + env(safe-area-inset-bottom));
+  padding: var(--space-2) var(--space-5) calc(140px + env(safe-area-inset-bottom));
   overscroll-behavior: contain;
   scroll-behavior: smooth;
 }
@@ -266,10 +268,20 @@ button { cursor: pointer; }
   border: 2px solid var(--line);
   box-sizing: border-box;
 }
-.check.on { color: #fff; }
+.check.on { color: transparent; }
 .check.on::before {
   background: var(--accent);
   border-color: var(--accent);
+}
+.check.on::after {
+  content: "";
+  position: absolute;
+  width: 4px;
+  height: 8px;
+  border-right: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: rotate(45deg) translate(-1px, -2px);
+  z-index: 1;
 }
 .check:focus-visible { outline-offset: 3px; }
 
@@ -386,10 +398,11 @@ button { cursor: pointer; }
 }
 .auth-panel .field input {
   min-height: 48px;
-  border-radius: 14px;
+  border-radius: 4px;
   padding: 12px 14px;
-  background: color-mix(in oklch, var(--field) 88%, transparent);
-  backdrop-filter: blur(8px);
+  background: var(--field);
+  border: 0.8px solid var(--line);
+  backdrop-filter: none;
 }
 .field-password { position: relative; }
 .field-password input { padding-right: 48px; }
@@ -639,21 +652,26 @@ button { cursor: pointer; }
 .toast.show { display: block; animation: rise .28s var(--ease); }
 
 .modal {
-  position: absolute; inset: 0; z-index: 40;
-  background: color-mix(in oklch, black 42%, transparent);
-  display: grid; align-items: end; justify-items: center;
-  padding: 12px;
+  position: fixed;
+  z-index: 80;
+  top: 0; bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100%, 430px);
+  background: rgba(0, 0, 0, 0.54);
+  display: grid; align-items: end; justify-items: stretch;
+  padding: 0;
   animation: fade .2s var(--ease);
 }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 .sheet {
-  width: min(100%, 430px);
+  width: 100%;
   max-height: min(88dvh, 720px);
   overflow: auto;
   background: var(--nav);
   border: 0;
   border-radius: 4px 4px 0 0;
-  padding: 20px 24px calc(18px + env(safe-area-inset-bottom));
+  padding: 20px 24px calc(24px + env(safe-area-inset-bottom));
   backdrop-filter: none;
   animation: sheetIn .32s var(--ease);
 }

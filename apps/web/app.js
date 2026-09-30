@@ -816,7 +816,7 @@ function emptyState(title, body, cta, onClick) {
 
 function todoCard(t, done, me) {
   const meta = [
-    t.payload.dueAt ? `今天 ${fmt(t.payload.dueAt).split(' ')[1] || fmt(t.payload.dueAt)}` : '待办',
+    t.payload.dueAt ? fmt(t.payload.dueAt) : '今天',
     api.isFamilyMode() && t.syncStatus === 'pending' ? '待同步' : null,
   ]
     .filter(Boolean)
@@ -825,7 +825,6 @@ function todoCard(t, done, me) {
     h('button', {
       className: `check ${done ? 'on' : ''}`,
       'aria-label': done ? '标为未完成' : '完成',
-      text: done ? '✓' : '',
       onClick: async () => {
         const completions = { ...(t.payload.completions || {}) };
         completions[me?.id || 'guest'] = done ? 'open' : 'done';
