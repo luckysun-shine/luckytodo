@@ -80,7 +80,7 @@ npx cap open android
 - Debug 试用：`Build → Build APK(s)`，或 `cd android && ./gradlew assembleDebug`
 - 正式包：配置 `android/keystore.properties` 后 `./gradlew assembleRelease`（APK）或 `bundleRelease`（AAB）
 
-Android 端与 iOS / Web 共用同一套业务；主屏组件仅 iOS 提供。
+Android 端与 iOS / Web 共用同一套业务，并提供「今日提醒 / 家庭日历」主屏组件（见 [`android/WIDGETS.md`](./android/WIDGETS.md)）。
 
 ## 已实现能力（对照 v003 + 后续迭代）
 
@@ -91,7 +91,7 @@ Android 端与 iOS / Web 共用同一套业务；主屏组件仅 iOS 提供。
 - 皮肤：夜航 / 日间 / 暖纸；字号标准 / 大
 - 启动闪屏 + PWA Service Worker + LuckyTodo Logo
 - Capacitor（iOS + Android）：StatusBar / SplashScreen / LocalNotifications / Haptics
-- **主屏组件（v004，仅 iOS）**：今日提醒 + 家庭日历 WidgetKit；App Group 快照；组件内添加待办（iOS 17+）。详见 `ios/WIDGETS.md`
+- **主屏组件（v004）**：今日提醒 + 家庭日历。iOS 见 `ios/WIDGETS.md`；Android 见 `android/WIDGETS.md`。
 
 ## 主屏组件（iOS）
 

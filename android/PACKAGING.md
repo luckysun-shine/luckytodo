@@ -63,6 +63,7 @@ npx cap sync android
    - 新建待办、计划；本地通知权限允许后提醒可用
    - 「我的」里连接家庭服务器（HTTPS）后能同步
    - 系统返回键：二级页返回上一层，首页退出应用
+   - 长按桌面 → 添加「今日提醒 / 家庭日历」组件；App 内刷新快照后组件有数据；日历「+」可快速添加待办草稿
 
 ## 4. 打 Debug APK（家人试用最快）
 
@@ -140,7 +141,7 @@ versionName "0.3.1"  // 用户可见版本
 | 本机账号、待办 / 日程 / 计划 | 与 Web / iOS 相同 |
 | 家庭 NAS 同步 | 相同；地址必须 HTTPS |
 | 本地通知 | Capacitor Local Notifications（需用户授权） |
-| 主屏组件 | **无**（WidgetKit 仅 iOS） |
+| 主屏组件 | **今日提醒 / 家庭日历**（见 [`WIDGETS.md`](./WIDGETS.md)） |
 | Google Play 上架 | 可用 AAB；需另备商店材料与隐私政策 |
 
 服务端仍用飞牛 Docker：`deploy/docker-compose.yml`。

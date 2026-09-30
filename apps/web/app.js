@@ -1895,7 +1895,7 @@ async function renderMeBody() {
           h('p', {
             className: 'muted',
             style: 'margin-top:8px',
-            text: '长按主屏 → 添加组件 → LuckyTodo。需 iOS 17+ 与 App Group 签名。',
+            text: '长按主屏 → 添加组件 → LuckyTodo。iOS 需 17+ 与 App Group；Android 安装后即可添加「今日提醒 / 家庭日历」。',
           }),
           h('button', {
             className: 'btn secondary block',

@@ -4,4 +4,9 @@
     <string name="title_activity_main">LuckyTodo</string>
     <string name="package_name">family.luckytodo.app</string>
     <string name="custom_url_scheme">family.luckytodo.app</string>
+    <string name="widget_today_label">今日提醒</string>
+    <string name="widget_today_description">今天要提醒或待处理的事项</string>
+    <string name="widget_calendar_label">家庭日历</string>
+    <string name="widget_calendar_description">浏览日程落点，并快速添加待办</string>
 </resources>
+

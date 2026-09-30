@@ -24,7 +24,45 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="luckytodo" />
+            </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".widget.TodayRemindersWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_today_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/today_reminders_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.FamilyCalendarWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_calendar_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/family_calendar_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.AddTodoActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="family.luckytodo.app.action.ADD_TODO_DRAFT" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -38,6 +76,5 @@
     </application>
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Local reminders: exact alarms help when the app is backgrounded. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 </manifest>

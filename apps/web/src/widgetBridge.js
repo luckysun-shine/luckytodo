@@ -1,4 +1,4 @@
-/** Publish IndexedDB entities into App Group for WidgetKit. */
+/** Publish IndexedDB entities for home-screen widgets (iOS App Group / Android filesDir). */
 import * as api from './api.js';
 import * as db from './db.js';
 import { isNative } from './native.js';
