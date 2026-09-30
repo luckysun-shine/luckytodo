@@ -32,8 +32,8 @@ export async function initNative() {
   const App = plugin('App');
 
   try {
-    if (StatusBar?.setStyle) await StatusBar.setStyle({ style: 'DARK' });
-    if (StatusBar?.setBackgroundColor) await StatusBar.setBackgroundColor({ color: '#0a1628' });
+    if (StatusBar?.setStyle) await StatusBar.setStyle({ style: 'LIGHT' });
+    if (StatusBar?.setBackgroundColor) await StatusBar.setBackgroundColor({ color: '#121212' });
   } catch {
     /* ignore */
   }

@@ -28,6 +28,7 @@ const state = {
   form: null,
   members: [],
   hideBanner: sessionStorage.getItem('lt_hide_banner') === '1',
+  query: '',
   mergeCount: 0,
   planId: null,
   calCursor: (() => {
@@ -49,13 +50,17 @@ window.addEventListener('offline', () => {
 });
 
 const icons = {
-  today: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11h16M4 7h16M8 3v4M16 3v4"/><rect x="4" y="5" width="16" height="16" rx="3"/><path d="M8 15h3M13 15h3"/></svg>',
-  cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>',
-  plans: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M5 6h.01M5 12h.01M5 18h.01"/></svg>',
-  insights: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg>',
-  me: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5"/></svg>',
-  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>',
-  sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.3-6"/><path d="M21 3v6h-6"/></svg>',
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"/></svg>',
+  today: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 11h16M4 7h16M8 3v4M16 3v4"/><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M8 15h3M13 15h3"/></svg>',
+  cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>',
+  plans: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg>',
+  insights: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></svg>',
+  me: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.2"/><path d="M5 19.5c1.4-3 3.8-4.5 7-4.5s5.6 1.5 7 4.5"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>',
+  sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-2.3-6"/><path d="M21 3v6h-6"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5"/></svg>',
+  clipboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 4.5h6v2H9zM9 10h6M9 14h4"/></svg>',
+  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 6l-6 6 6 6"/></svg>',
 };
 
 function toast(msg) {
@@ -150,14 +155,6 @@ function fmt(iso) {
 function fmtDateNice(d = new Date()) {
   const w = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
   return `${d.getMonth() + 1}月${d.getDate()}日 · 周${w}`;
-}
-
-function hello() {
-  const h = new Date().getHours();
-  if (h < 11) return '早上好';
-  if (h < 14) return '中午好';
-  if (h < 18) return '下午好';
-  return '晚上好';
 }
 
 function localDayKeyFromIso(iso) {
@@ -328,24 +325,10 @@ const ICONS_EYE = {
   hide: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l18 18"/><path d="M10.6 10.6a2.5 2.5 0 0 0 3.5 3.5"/><path d="M9.9 5.2A10.6 10.6 0 0 1 12 5c6.5 0 10 7 10 7a17.5 17.5 0 0 1-3.2 4.3"/><path d="M6.1 6.1C4 7.8 2.5 10.2 2 12c0 0 3.5 7 10 7a10.4 10.4 0 0 0 4.3-.9"/></svg>',
 };
 
-function authHero({ title, lead, tag = '家庭待办 · 本机优先' }) {
+function authHero({ title, lead }) {
   return h('header', { className: 'auth-hero' }, [
-    h('div', { className: 'wordmark' }, [
-      h('img', {
-        className: 'mark-img',
-        src: './public/logo.png',
-        alt: 'LuckyTodo',
-        width: '48',
-        height: '48',
-        decoding: 'async',
-      }),
-      h('div', {}, [
-        h('div', { className: 'product', text: 'LuckyTodo' }),
-        h('p', { className: 'tag', text: tag }),
-      ]),
-    ]),
     h('h1', { text: title }),
-    h('p', { className: 'lead', text: lead }),
+    lead ? h('p', { className: 'lead', text: lead }) : null,
   ]);
 }
 
@@ -432,7 +415,7 @@ function renderLocalRegister() {
   const doRegister = async () => {
     if (!name.input.value.trim()) return toast('请填写称呼');
     if (pass.input.value !== pass2.input.value) return toast('两次密码不一致');
-    setBusy(submit, '创建中…', '创建账号');
+    setBusy(submit, '创建中…', '注册');
     try {
       await api.createLocalAccount({
         displayName: name.input.value,
@@ -442,20 +425,31 @@ function renderLocalRegister() {
       await afterLocalLogin();
     } catch (e) {
       toast(e.message);
-      setBusy(submit, null, '创建账号');
+      setBusy(submit, null, '注册');
     }
   };
   const submit = h('button', {
     className: 'btn lg block',
-    text: '创建账号',
+    text: '注册',
     onClick: doRegister,
   });
 
   return authShell({
+    back: api.hasLocalAccounts()
+      ? h('button', {
+          type: 'button',
+          className: 'icon-btn',
+          'aria-label': '返回登录',
+          html: icons.back,
+          onClick: () => {
+            state.screen = 'local-login';
+            render();
+          },
+        })
+      : null,
     hero: authHero({
-      title: '创建你的账号',
-      lead: '先完成本机注册即可开始使用。家庭服务器可以以后再连，不影响日常记录。',
-      tag: '首次使用 · 本机账号',
+      title: '注册',
+      lead: '先完成本机注册即可开始使用。家庭服务器可以以后再连。',
     }),
     panel: [name.el, user.el, pass.el, pass2.el],
     cta: [
@@ -508,9 +502,8 @@ function renderLocalLogin() {
 
   return authShell({
     hero: authHero({
-      title: '欢迎回来',
+      title: '登录',
       lead: '登录本机账号，继续管理待办、日程与家庭计划。',
-      tag: '本机账号',
     }),
     panel: [user.el, pass.el],
     cta: [
@@ -693,9 +686,10 @@ function renderFamilyLogin() {
       },
     }),
     hero: authHero({
-      title: '登录家庭账号',
-      lead: '登录后可与家人关联，并在联网时自动同步。',
-      tag: api.apiBase() ? `服务器 · ${api.apiBase().replace(/^https?:\/\//, '')}` : '家庭服务器',
+      title: '登录',
+      lead: api.apiBase()
+        ? `登录家庭账号后即可同步。服务器 ${api.apiBase().replace(/^https?:\/\//, '')}`
+        : '登录后可与家人关联，并在联网时自动同步。',
     }),
     panel: [user.el, pass.el],
     cta: [submit],
@@ -747,27 +741,30 @@ function renderMerge() {
 
 function tabs() {
   const items = [
-    ['today', '今天', icons.today],
+    ['today', '首页', icons.home],
     ['cal', '日历', icons.cal],
+    null,
     ['plans', '计划', icons.plans],
-    ['insights', '洞察', icons.insights],
     ['me', '我的', icons.me],
   ];
   return h(
     'nav',
     { className: 'tabs', role: 'tablist', 'aria-label': '主导航' },
-    items.map(([id, label, icon]) =>
-      h('button', {
-        className: state.tab === id ? 'active' : '',
+    items.map((item) => {
+      if (!item) return h('div', { className: 'tabs-gap', 'aria-hidden': 'true' });
+      const [id, label, icon] = item;
+      const active = state.tab === id || (id === 'me' && state.tab === 'insights');
+      return h('button', {
+        className: active ? 'active' : '',
         role: 'tab',
-        'aria-selected': state.tab === id,
+        'aria-selected': active,
         html: `${icon}<span>${label}</span>`,
         onClick: () => {
           state.tab = id;
           render();
         },
-      })
-    )
+      });
+    })
   );
 }
 
@@ -808,11 +805,47 @@ function offlineBanner() {
 
 function emptyState(title, body, cta, onClick) {
   return h('div', { className: 'empty' }, [
+    h('div', { className: 'empty-mark', html: icons.clipboard, 'aria-hidden': 'true' }),
     h('h3', { text: title }),
     h('p', { text: body }),
     cta
-      ? h('button', { className: 'btn secondary', text: cta, onClick })
+      ? h('button', { className: 'btn', text: cta, onClick })
       : null,
+  ]);
+}
+
+function todoCard(t, done, me) {
+  const meta = [
+    t.payload.dueAt ? `今天 ${fmt(t.payload.dueAt).split(' ')[1] || fmt(t.payload.dueAt)}` : '待办',
+    api.isFamilyMode() && t.syncStatus === 'pending' ? '待同步' : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return h('div', { className: `todo-row ${done ? 'done' : ''}` }, [
+    h('button', {
+      className: `check ${done ? 'on' : ''}`,
+      'aria-label': done ? '标为未完成' : '完成',
+      text: done ? '✓' : '',
+      onClick: async () => {
+        const completions = { ...(t.payload.completions || {}) };
+        completions[me?.id || 'guest'] = done ? 'open' : 'done';
+        await api.saveLocalEntity('todo', { ...t.payload, completions }, { id: t.id });
+        if (!done) native.lightTap();
+        toast(done ? '已恢复为未完成' : '已完成');
+        render();
+        maybeSync();
+      },
+    }),
+    h('div', { className: 'grow' }, [
+      h('h3', { text: t.payload.title }),
+      done
+        ? h('p', { className: 'task-time', text: meta })
+        : h('div', { className: 'task-meta' }, [
+            h('span', { className: 'task-time', text: meta }),
+            h('span', { className: 'task-chip', text: '待办' }),
+            t.payload.dueAt ? h('span', { className: 'task-flag', text: '优先' }) : null,
+          ]),
+    ]),
   ]);
 }
 
@@ -822,52 +855,60 @@ async function renderTodayBody() {
   const notes = await listActive('note');
   const me = api.getMember();
   const wrap = h('div');
-  const openTodos = todos.filter((t) => (t.payload.completions || {})[me?.id || 'guest'] !== 'done');
+  const q = (state.query || '').trim().toLowerCase();
+  const match = (title) => !q || String(title || '').toLowerCase().includes(q);
+  const visibleTodos = todos.filter((t) => match(t.payload.title));
+  const openTodos = visibleTodos.filter((t) => (t.payload.completions || {})[me?.id || 'guest'] !== 'done');
+  const doneTodos = visibleTodos.filter((t) => (t.payload.completions || {})[me?.id || 'guest'] === 'done');
 
-  appendNodes(wrap, h('div', { className: 'section-label', text: `今日待办 · ${openTodos.length} 件未完成` }));
+  const searchInput = h('input', {
+    className: 'task-search-input',
+    type: 'search',
+    placeholder: '搜索待办…',
+    value: state.query || '',
+    'aria-label': '搜索待办',
+  });
+  searchInput.addEventListener('input', () => {
+    const start = searchInput.selectionStart;
+    state.query = searchInput.value;
+    render().then(() => {
+      const next = root.querySelector('.task-search-input');
+      if (!next) return;
+      next.focus();
+      const pos = Math.min(start ?? next.value.length, next.value.length);
+      try { next.setSelectionRange(pos, pos); } catch { /* search inputs may reject selection */ }
+    });
+  });
+  appendNodes(
+    wrap,
+    h('p', { className: 'muted', text: fmtDateNice() }),
+    h('label', { className: 'task-search' }, [
+      h('span', { html: icons.search, 'aria-hidden': 'true' }),
+      searchInput,
+    ])
+  );
 
-  if (!todos.length) {
+  if (!visibleTodos.length) {
     appendNodes(
       wrap,
-      emptyState('今天还没有待办', '三秒记下要做的事，勾完就清爽了。', '新建待办', () => openCreateForm('todo'))
+      emptyState(
+        q ? '没有匹配的待办' : '今天想做什么？',
+        q ? '换个关键词试试。' : '点下方 + 添加任务',
+        q ? null : '添加待办',
+        q ? null : () => openCreateForm('todo')
+      )
     );
-  }
-
-  for (const t of todos) {
-    const done = (t.payload.completions || {})[me?.id || 'guest'] === 'done';
-    const meta = [
-      t.payload.dueAt ? `截止 ${fmt(t.payload.dueAt)}` : null,
-      api.isFamilyMode() && t.syncStatus === 'pending' ? '待同步' : null,
-    ]
-      .filter(Boolean)
-      .join(' · ');
-    appendNodes(
-      wrap,
-      h('div', { className: `todo-row ${done ? 'done' : ''}` }, [
-        h('button', {
-          className: `check ${done ? 'on' : ''}`,
-          'aria-label': done ? '标为未完成' : '完成',
-          html: done ? '✓' : '',
-          onClick: async () => {
-            const completions = { ...(t.payload.completions || {}) };
-            completions[me?.id || 'guest'] = done ? 'open' : 'done';
-            await api.saveLocalEntity('todo', { ...t.payload, completions }, { id: t.id });
-            if (!done) native.lightTap();
-            toast(done ? '已恢复为未完成' : '已完成');
-            render();
-            maybeSync();
-          },
-        }),
-        h('div', { className: 'grow' }, [
-          h('h3', { text: t.payload.title }),
-          meta ? h('p', { text: meta }) : h('p', { text: '待办' }),
-        ]),
-      ])
-    );
+  } else {
+    appendNodes(wrap, h('div', { className: 'fold', text: `未完成  ${openTodos.length}` }));
+    if (!openTodos.length) appendNodes(wrap, h('p', { className: 'muted', text: '未完成的待办都勾完了。' }));
+    for (const t of openTodos) appendNodes(wrap, todoCard(t, false, me));
+    appendNodes(wrap, h('div', { className: 'fold', text: `已完成  ${doneTodos.length}` }));
+    if (!doneTodos.length) appendNodes(wrap, h('p', { className: 'muted', text: '还没有完成的待办。' }));
+    for (const t of doneTodos) appendNodes(wrap, todoCard(t, true, me));
   }
 
   appendNodes(wrap, h('div', { className: 'section-label', text: '今日计划' }));
-  const activePlans = plans.filter((x) => !x.payload.archived);
+  const activePlans = plans.filter((x) => !x.payload.archived && match(x.payload.title));
   if (!activePlans.length) {
     appendNodes(
       wrap,
@@ -957,9 +998,9 @@ async function renderTodayBody() {
 
   appendNodes(wrap, h('div', { className: 'section-label', text: '最近便签' }));
   if (!notes.length) {
-    appendNodes(wrap, h('p', { className: 'muted', text: '没有便签。点右下角可随手记。' }));
+    appendNodes(wrap, h('p', { className: 'muted', text: '没有便签。点下方 + 可随手记。' }));
   }
-  for (const n of notes.slice(0, 4)) {
+  for (const n of notes.filter((item) => match(item.payload.title)).slice(0, 4)) {
     appendNodes(
       wrap,
       h('div', { className: 'card pressable' }, [
@@ -1094,7 +1135,7 @@ async function renderCalBody() {
   if (!dayItems.length) {
     appendNodes(
       list,
-      emptyState('这天还没有安排', '点右下角新建日程，或给待办加上截止日。', '新建日程', () => openCreateForm('event'))
+      emptyState('这天还没有安排', '点下方 + 新建日程，或给待办加上截止日。', '新建日程', () => openCreateForm('event'))
     );
   } else {
     for (const it of dayItems) {
@@ -1203,10 +1244,11 @@ async function renderPlanDetail() {
   const prog = milestoneProgress(milestones);
   const cycleLabel = { daily: '每天', weekly: '每周', monthly: '每月', interval: '间隔' }[plan.payload.cycle] || '计划';
   const wrap = h('div', { className: 'screen' }, [
-    h('div', { className: 'top' }, [
+    h('div', { className: 'top appbar' }, [
       h('button', {
-        className: 'auth-back',
-        text: '← 计划',
+        className: 'icon-btn',
+        'aria-label': '返回计划',
+        html: icons.back,
         onClick: () => {
           state.screen = 'home';
           state.tab = 'plans';
@@ -1215,6 +1257,7 @@ async function renderPlanDetail() {
         },
       }),
       h('h1', { text: plan.payload.title }),
+      h('span', { className: 'appbar-side' }),
     ]),
     h('div', { className: 'scroller' }, [
       h('div', { className: 'card' }, [
@@ -1529,23 +1572,36 @@ async function renderMeBody() {
   );
 
   const familyMode = api.isFamilyMode();
+  const todos = await listActive('todo');
+  const meId = me?.id || 'guest';
+  const openCount = todos.filter((t) => (t.payload.completions || {})[meId] !== 'done').length;
+  const doneCount = todos.length - openCount;
   const wrap = h('div', {}, [
     fileInput,
-    h('div', { className: 'card row' }, [
+    h('div', { className: 'profile-head' }, [
       avatar,
-      h('div', { className: 'grow' }, [
-        h('h3', { text: me?.displayName || '未登录' }),
-        h('p', {
-          text: me
-            ? `${roleLabel(me.role)} · @${me.username}`
-            : '请先登录',
-        }),
-        h('p', {
-          text: familyMode
-            ? `家庭：${family?.name || '已连接'} · 可同步`
-            : '本机账号 · 离线本地使用',
-        }),
-      ]),
+      h('h2', { text: me?.displayName || '未登录' }),
+      h('p', {
+        text: me
+          ? `${roleLabel(me.role)} · @${me.username}${familyMode ? ` · ${family?.name || '家庭'}` : ' · 本机账号'}`
+          : '请先登录',
+      }),
+    ]),
+    h('div', { className: 'profile-stats' }, [
+      h('div', { className: 'profile-stat', text: `${openCount} 件未完成` }),
+      h('div', { className: 'profile-stat', text: `${doneCount} 件已完成` }),
+    ]),
+    h('button', {
+      type: 'button',
+      className: 'settings-row',
+      onClick: () => {
+        state.tab = 'insights';
+        render();
+      },
+    }, [
+      h('span', { html: icons.insights, 'aria-hidden': 'true' }),
+      h('span', { className: 'grow', text: '洞察' }),
+      h('span', { className: 'chev', text: '›' }),
     ]),
   ]);
 
@@ -1811,7 +1867,7 @@ async function renderMeBody() {
     wrap,
     h('div', { style: 'height:16px' }),
     h('button', {
-      className: 'btn secondary block',
+      className: 'settings-row danger',
       text: '退出登录',
       onClick: async () => {
         if (familyMode) {
@@ -2207,7 +2263,7 @@ function renderCreateMenu() {
   }, [
     h('div', { className: 'sheet', role: 'dialog', 'aria-label': '新建' }, [
       h('div', { className: 'handle' }),
-      h('h2', { text: '新建' }),
+      h('h2', { text: '添加' }),
       h(
         'div',
         { className: 'menu-list' },
@@ -2232,16 +2288,18 @@ function renderCreateMenu() {
 
 function formShell(title, bodyNodes, onSave, saveLabel) {
   return h('div', { className: 'form-screen', role: 'dialog', 'aria-modal': 'true' }, [
-    h('div', { className: 'top' }, [
+    h('div', { className: 'top appbar' }, [
       h('button', {
-        className: 'btn ghost',
-        text: '返回',
+        className: 'icon-btn',
+        'aria-label': '返回',
+        html: icons.back,
         onClick: () => {
           state.form = { mode: 'menu' };
           render();
         },
       }),
       h('h1', { text: title }),
+      h('span', { className: 'appbar-side' }),
     ]),
     h('div', { className: 'scroller' }, [
       ...bodyNodes,
@@ -2849,11 +2907,11 @@ function renderCreateModal() {
 
 async function renderHome() {
   const titles = {
-    today: null,
+    today: '首页',
     cal: '日历',
     plans: '计划',
     insights: '洞察',
-    me: '我的',
+    me: '个人',
   };
   const bodyMap = {
     today: renderTodayBody,
@@ -2864,45 +2922,46 @@ async function renderHome() {
   };
   const body = await bodyMap[state.tab]();
   const me = api.getMember();
-  const familyMode = api.isFamilyMode();
-  const top =
-    state.tab === 'today'
-      ? h('div', { className: 'top' }, [
-          h('div', { className: 'greeting' }, [
-            h('p', { className: 'eyebrow', text: fmtDateNice() }),
-            h('h1', { text: `${hello()}${me ? '，' + me.displayName : ''}` }),
-          ]),
-          familyMode
-            ? h('button', {
-                className: 'icon-btn',
-                'aria-label': '同步',
-                html: icons.sync,
-                onClick: async () => {
-                  try {
-                    const r = await api.syncNow();
-                    toast(r.skipped ? '当前无法同步' : `已同步 ${r.pullCount} 条`);
-                    render();
-                  } catch (e) {
-                    toast(e.message);
-                  }
-                },
-              })
-            : null,
-        ])
-      : h('div', { className: 'top' }, [h('h1', { text: titles[state.tab] })]);
+  const back =
+    state.tab === 'insights'
+      ? h('button', {
+          className: 'icon-btn',
+          'aria-label': '返回个人',
+          html: icons.back,
+          onClick: () => {
+            state.tab = 'me';
+            render();
+          },
+        })
+      : h('span', { className: 'appbar-side' });
+  const right =
+    state.tab === 'today' && me
+      ? h('button', {
+          className: 'avatar sm',
+          'aria-label': '打开个人页',
+          text: me.displayName?.[0] || '?',
+          onClick: () => {
+            state.tab = 'me';
+            render();
+          },
+        })
+      : h('span', { className: 'appbar-side' });
+  const top = h('div', { className: 'top appbar' }, [
+    back,
+    h('h1', { text: titles[state.tab] }),
+    right,
+  ]);
 
   return h('div', { className: 'screen' }, [
     top,
     offlineBanner(),
     h('div', { className: 'scroller' }, [body]),
-    state.tab !== 'me' && state.tab !== 'insights'
-      ? h('button', {
-          className: 'fab',
-          'aria-label': '新建',
-          html: icons.plus,
-          onClick: openCreateSheet,
-        })
-      : null,
+    h('button', {
+      className: 'fab',
+      'aria-label': '添加',
+      html: icons.plus,
+      onClick: openCreateSheet,
+    }),
     tabs(),
     renderCreateModal(),
   ]);
