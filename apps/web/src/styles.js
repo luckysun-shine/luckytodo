@@ -1,8 +1,10 @@
-/** LuckyTodo design tokens — ink + seafoam family utility (avoid generic purple AI look). */
+/** LuckyTodo design tokens — cool slate + sky accent (aligned with house-checklist logo).
+ * Register: h5 + product app shell. Crafted via finesse-ui redesign. */
 export const css = `
 :root {
   color-scheme: dark;
-  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -11,8 +13,8 @@ export const css = `
   --space-6: 32px;
   --radius-sm: 12px;
   --radius-md: 16px;
-  --radius-lg: 22px;
-  --radius-xl: 28px;
+  --radius-lg: 20px;
+  --radius-xl: 26px;
   --font-display: "Outfit", "Noto Sans SC", sans-serif;
   --font-body: "Noto Sans SC", "PingFang SC", sans-serif;
   --tap: 44px;
@@ -21,13 +23,14 @@ export const css = `
 html, body { margin: 0; height: 100%; }
 body {
   min-height: 100dvh;
-  background: #071014;
-  color: oklch(0.96 0.01 200);
+  background: #0c1219;
+  color: oklch(0.96 0.012 230);
   font-family: var(--font-body);
   font-size: 16px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+  overflow: hidden;
 }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
@@ -43,78 +46,93 @@ button { cursor: pointer; }
 }
 
 #app {
-  --bg: oklch(0.16 0.02 210);
-  --bg-elev: oklch(0.20 0.02 210);
-  --surface: color-mix(in oklch, oklch(0.28 0.025 205) 78%, transparent);
-  --text: oklch(0.97 0.01 200);
-  --muted: oklch(0.72 0.02 210);
-  --accent: oklch(0.72 0.12 185);
-  --accent-strong: oklch(0.62 0.13 185);
-  --on-accent: oklch(0.18 0.02 210);
-  --done: oklch(0.74 0.12 155);
-  --warn: oklch(0.78 0.12 55);
-  --miss: oklch(0.68 0.15 25);
-  --line: color-mix(in oklch, white 10%, transparent);
-  --field: oklch(0.22 0.02 210);
-  --glow: color-mix(in oklch, var(--accent) 28%, transparent);
+  /* Cool slate ramp + sky accent (logo-aligned, not purple SaaS) */
+  --page: oklch(0.145 0.018 240);
+  --bg: oklch(0.165 0.02 240);
+  --bg-elev: oklch(0.205 0.02 240);
+  --surface: oklch(0.22 0.018 240);
+  --panel-2: oklch(0.19 0.016 240);
+  --text: oklch(0.96 0.01 230);
+  --muted: oklch(0.70 0.02 240);
+  --accent: oklch(0.68 0.14 250);
+  --accent-strong: oklch(0.60 0.15 250);
+  --accent-soft: color-mix(in oklch, var(--accent) 14%, transparent);
+  --on-accent: oklch(0.99 0.005 230);
+  --done: oklch(0.72 0.11 160);
+  --warn: oklch(0.78 0.11 70);
+  --miss: oklch(0.66 0.16 25);
+  --line: color-mix(in oklch, oklch(0.85 0.02 240) 12%, transparent);
+  --field: oklch(0.185 0.018 240);
+  --glow: color-mix(in oklch, var(--accent) 32%, transparent);
+  --shadow: 0 1px 2px color-mix(in oklch, oklch(0.2 0.02 240) 35%, transparent);
+  --shadow-lg: 0 18px 40px -18px color-mix(in oklch, oklch(0.15 0.03 250) 55%, transparent);
   max-width: 430px;
   margin: 0 auto;
   min-height: 100dvh;
+  height: 100dvh;
   position: relative;
   display: flex;
   flex-direction: column;
   background:
-    radial-gradient(ellipse 90% 50% at 10% -10%, color-mix(in oklch, var(--accent) 18%, transparent), transparent 55%),
-    radial-gradient(ellipse 70% 40% at 100% 0%, color-mix(in oklch, oklch(0.55 0.08 240) 14%, transparent), transparent 50%),
-    var(--bg);
+    radial-gradient(ellipse 100% 55% at 50% -18%, color-mix(in oklch, var(--accent) 16%, transparent), transparent 58%),
+    var(--page);
   color: var(--text);
   overflow: hidden;
 }
 #app[data-theme="day"] {
   color-scheme: light;
-  --bg: oklch(0.97 0.01 210);
-  --bg-elev: oklch(0.99 0.005 210);
-  --surface: oklch(1 0.004 210);
-  --text: oklch(0.24 0.02 220);
-  --muted: oklch(0.48 0.02 220);
-  --accent: oklch(0.52 0.11 185);
-  --accent-strong: oklch(0.45 0.12 185);
-  --on-accent: oklch(0.99 0.01 200);
-  --done: oklch(0.48 0.11 155);
-  --warn: oklch(0.58 0.12 55);
-  --miss: oklch(0.52 0.14 25);
-  --line: color-mix(in oklch, var(--text) 12%, transparent);
-  --field: oklch(0.96 0.01 210);
-  --glow: color-mix(in oklch, var(--accent) 18%, transparent);
+  --page: oklch(0.965 0.008 240);
+  --bg: oklch(0.975 0.006 240);
+  --bg-elev: oklch(0.99 0.004 240);
+  --surface: oklch(0.995 0.003 240);
+  --panel-2: oklch(0.95 0.008 240);
+  --text: oklch(0.26 0.025 250);
+  --muted: oklch(0.48 0.02 245);
+  --accent: oklch(0.52 0.14 250);
+  --accent-strong: oklch(0.45 0.15 250);
+  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
+  --on-accent: oklch(0.99 0.005 230);
+  --done: oklch(0.48 0.11 160);
+  --warn: oklch(0.58 0.12 70);
+  --miss: oklch(0.52 0.15 25);
+  --line: color-mix(in oklch, var(--text) 11%, transparent);
+  --field: oklch(0.955 0.008 240);
+  --glow: color-mix(in oklch, var(--accent) 20%, transparent);
+  --shadow: 0 1px 2px color-mix(in oklch, oklch(0.35 0.02 250) 12%, transparent);
+  --shadow-lg: 0 16px 36px -20px color-mix(in oklch, oklch(0.4 0.04 250) 28%, transparent);
   background:
-    radial-gradient(ellipse 80% 40% at 0% 0%, color-mix(in oklch, var(--accent) 12%, transparent), transparent 50%),
-    var(--bg);
+    radial-gradient(ellipse 90% 42% at 50% -12%, color-mix(in oklch, var(--accent) 10%, transparent), transparent 55%),
+    var(--page);
 }
 #app[data-theme="paper"] {
   color-scheme: light;
-  --bg: oklch(0.96 0.02 95);
-  --bg-elev: oklch(0.98 0.015 95);
-  --surface: oklch(0.99 0.01 95);
-  --text: oklch(0.28 0.03 80);
-  --muted: oklch(0.48 0.03 75);
-  --accent: oklch(0.52 0.1 160);
-  --accent-strong: oklch(0.45 0.1 160);
-  --on-accent: oklch(0.98 0.01 95);
-  --done: oklch(0.46 0.1 150);
-  --warn: oklch(0.55 0.11 55);
-  --miss: oklch(0.5 0.12 30);
-  --line: color-mix(in oklch, var(--text) 12%, transparent);
-  --field: oklch(0.97 0.015 95);
+  /* Warm stone — restrained, not cream+terracotta craft kit */
+  --page: oklch(0.955 0.012 85);
+  --bg: oklch(0.965 0.01 85);
+  --bg-elev: oklch(0.98 0.008 85);
+  --surface: oklch(0.985 0.006 85);
+  --panel-2: oklch(0.94 0.012 85);
+  --text: oklch(0.28 0.025 70);
+  --muted: oklch(0.48 0.02 70);
+  --accent: oklch(0.50 0.11 250);
+  --accent-strong: oklch(0.44 0.12 250);
+  --accent-soft: color-mix(in oklch, var(--accent) 12%, transparent);
+  --on-accent: oklch(0.99 0.005 230);
+  --done: oklch(0.46 0.1 155);
+  --warn: oklch(0.55 0.1 70);
+  --miss: oklch(0.5 0.13 30);
+  --line: color-mix(in oklch, var(--text) 11%, transparent);
+  --field: oklch(0.95 0.01 85);
   --glow: color-mix(in oklch, var(--accent) 16%, transparent);
-  background:
-    radial-gradient(ellipse 70% 35% at 80% 0%, color-mix(in oklch, oklch(0.7 0.08 80) 20%, transparent), transparent 55%),
-    var(--bg);
+  --shadow: 0 1px 2px color-mix(in oklch, oklch(0.35 0.02 70) 10%, transparent);
+  --shadow-lg: 0 16px 36px -20px color-mix(in oklch, oklch(0.4 0.03 70) 22%, transparent);
+  background: var(--page);
 }
 #app[data-font="large"] { font-size: 17.5px; }
 
-.screen { flex: 1; min-height: 0; display: flex; flex-direction: column; animation: rise .35s var(--ease); }
+.screen { flex: 1; min-height: 0; display: flex; flex-direction: column; animation: rise .32s var(--ease-out); }
 @keyframes rise {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
 }
 
@@ -128,28 +146,30 @@ button { cursor: pointer; }
   font-family: var(--font-display);
   font-size: 1.625rem; font-weight: 700;
   letter-spacing: -0.03em; line-height: 1.15;
+  text-wrap: balance;
 }
 .eyebrow {
   margin: 0 0 4px;
   font-size: 0.75rem; font-weight: 600;
-  letter-spacing: 0.04em; color: var(--muted);
+  letter-spacing: 0.01em; color: var(--muted);
 }
 .greeting { display: grid; gap: 2px; flex: 1; min-width: 0; }
 .greeting h1 { font-size: 1.5rem; }
 
 .scroller {
   flex: 1; min-height: 0; overflow: auto;
-  padding: var(--space-2) var(--space-4) calc(128px + env(safe-area-inset-bottom));
+  padding: var(--space-2) var(--space-4) calc(118px + env(safe-area-inset-bottom));
   overscroll-behavior: contain;
   scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
 }
 
 .banner {
   margin: 0 var(--space-4) var(--space-3);
   padding: 10px 12px;
   border-radius: var(--radius-md);
-  background: color-mix(in oklch, var(--accent) 14%, var(--surface));
-  border: 1px solid color-mix(in oklch, var(--accent) 25%, transparent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in oklch, var(--accent) 28%, transparent);
   color: var(--text); font-size: 0.8125rem;
   display: flex; align-items: center; gap: 8px;
 }
@@ -160,8 +180,8 @@ button { cursor: pointer; }
 
 .section-label {
   margin: var(--space-5) 2px var(--space-3);
-  font-size: 0.75rem; font-weight: 650;
-  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+  font-size: 0.8125rem; font-weight: 650;
+  letter-spacing: -0.01em; color: var(--muted);
 }
 .section-label:first-child { margin-top: var(--space-2); }
 
@@ -171,8 +191,8 @@ button { cursor: pointer; }
   border-radius: var(--radius-lg);
   padding: var(--space-4);
   margin: 0 0 var(--space-3);
-  backdrop-filter: blur(16px);
-  transition: transform .18s var(--ease), border-color .18s var(--ease);
+  box-shadow: var(--shadow);
+  transition: transform .16s var(--ease), border-color .16s var(--ease), background .16s var(--ease);
 }
 .card.pressable:active { transform: scale(0.985); }
 .card h3 {
@@ -191,7 +211,8 @@ button { cursor: pointer; }
   border-radius: var(--radius-md);
   background: var(--surface);
   border: 1px solid var(--line);
-  transition: background .15s var(--ease);
+  box-shadow: var(--shadow);
+  transition: background .15s var(--ease), border-color .15s var(--ease);
 }
 .todo-row:active { background: color-mix(in oklch, var(--accent) 8%, var(--surface)); }
 .todo-row.done h3 { text-decoration: line-through; color: var(--muted); font-weight: 550; }
@@ -220,7 +241,7 @@ button { cursor: pointer; }
   font-family: var(--font-display);
   font-weight: 650; letter-spacing: -0.01em;
   background: var(--accent); color: var(--on-accent);
-  box-shadow: 0 8px 24px var(--glow);
+  box-shadow: 0 8px 22px var(--glow);
   transition: transform .15s var(--ease), filter .15s var(--ease);
 }
 .btn:active { transform: scale(0.98); }
@@ -230,12 +251,12 @@ button { cursor: pointer; }
   border: 1px solid var(--line); box-shadow: none;
 }
 .btn.ghost {
-  background: transparent; color: var(--accent); box-shadow: none;
+  background: transparent; color: var(--accent-strong); box-shadow: none;
   min-height: 36px; padding: 0 10px;
 }
 .btn.danger {
-  background: color-mix(in oklch, var(--miss) 85%, black);
-  color: white; box-shadow: none;
+  background: color-mix(in oklch, var(--miss) 88%, var(--bg));
+  color: oklch(0.98 0.01 30); box-shadow: none;
 }
 .btn.block { width: 100%; }
 .btn.lg { min-height: 52px; font-size: 1.05rem; border-radius: var(--radius-lg); }
@@ -522,22 +543,24 @@ button { cursor: pointer; }
 .tabs {
   position: absolute;
   left: 12px; right: 12px;
-  bottom: calc(10px + env(safe-area-inset-bottom));
+  bottom: calc(8px + env(safe-area-inset-bottom));
   display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px;
   padding: 6px;
-  border-radius: 24px;
-  background: color-mix(in oklch, var(--bg-elev) 82%, transparent);
+  border-radius: 22px;
+  background: color-mix(in oklch, var(--bg-elev) 92%, transparent);
   border: 1px solid var(--line);
-  backdrop-filter: blur(22px) saturate(140%);
-  box-shadow: 0 12px 40px color-mix(in oklch, black 25%, transparent);
+  backdrop-filter: blur(20px) saturate(130%);
+  box-shadow: var(--shadow-lg);
+  z-index: 30;
 }
 .tabs button {
   border: 0; background: transparent; color: var(--muted);
-  min-height: 52px; border-radius: 18px;
+  min-height: 52px; border-radius: 16px;
   display: grid; place-items: center; gap: 2px;
   font-size: 0.65rem; font-weight: 650;
-  transition: background .18s var(--ease), color .18s var(--ease);
+  transition: background .16s var(--ease), color .16s var(--ease), transform .12s var(--ease);
 }
+.tabs button:active { transform: scale(0.96); }
 .tabs button svg { width: 22px; height: 22px; }
 .tabs button.active {
   color: var(--on-accent);
@@ -548,12 +571,13 @@ button { cursor: pointer; }
 .fab {
   position: absolute;
   right: 20px;
-  bottom: calc(84px + env(safe-area-inset-bottom));
-  width: 58px; height: 58px; border: 0; border-radius: 20px;
+  bottom: calc(78px + env(safe-area-inset-bottom));
+  width: 56px; height: 56px; border: 0; border-radius: 18px;
   background: var(--accent); color: var(--on-accent);
   display: grid; place-items: center;
-  box-shadow: 0 14px 32px var(--glow);
-  transition: transform .18s var(--ease);
+  box-shadow: 0 12px 28px var(--glow);
+  transition: transform .16s var(--ease);
+  z-index: 28;
 }
 .fab:active { transform: scale(0.94); }
 .fab svg { width: 26px; height: 26px; }
@@ -564,15 +588,15 @@ button { cursor: pointer; }
   left: 16px; right: 16px; z-index: 60;
   padding: 12px 14px; border-radius: var(--radius-md);
   background: var(--bg-elev); border: 1px solid var(--line);
-  box-shadow: 0 12px 32px color-mix(in oklch, black 30%, transparent);
+  box-shadow: var(--shadow-lg);
   font-size: 0.875rem; font-weight: 550;
   display: none;
 }
-.toast.show { display: block; animation: rise .28s var(--ease); }
+.toast.show { display: block; animation: rise .26s var(--ease-out); }
 
 .modal {
   position: absolute; inset: 0; z-index: 40;
-  background: color-mix(in oklch, black 42%, transparent);
+  background: color-mix(in oklch, oklch(0.12 0.02 240) 55%, transparent);
   display: grid; align-items: end; justify-items: center;
   padding: 12px;
   animation: fade .2s var(--ease);
@@ -582,15 +606,15 @@ button { cursor: pointer; }
   width: min(100%, 430px);
   max-height: min(88dvh, 720px);
   overflow: auto;
-  background: color-mix(in oklch, var(--bg-elev) 92%, transparent);
+  background: var(--bg-elev);
   border: 1px solid var(--line);
-  border-radius: var(--radius-xl) var(--radius-xl) 24px 24px;
-  padding: 10px 16px 18px;
-  backdrop-filter: blur(24px) saturate(140%);
-  animation: sheetIn .32s var(--ease);
+  border-radius: var(--radius-xl) var(--radius-xl) 22px 22px;
+  padding: 10px 16px calc(18px + env(safe-area-inset-bottom));
+  box-shadow: var(--shadow-lg);
+  animation: sheetIn .28s var(--ease-out);
 }
 @keyframes sheetIn {
-  from { transform: translateY(24px); opacity: 0.6; }
+  from { transform: translateY(18px); opacity: 0.7; }
   to { transform: none; opacity: 1; }
 }
 .sheet .handle {
