@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "finesse-brief": {
+      "source": "mouse-lin/finesse-brief",
+      "sourceType": "github",
+      "skillPath": "skills/finesse-brief/SKILL.md",
+      "computedHash": "d27de697713ac99d3117346eaa9787d750775bf1c423e521359e0d528e385637"
+    },
+    "finesse-term": {
+      "source": "mouse-lin/finesse-term",
+      "sourceType": "github",
+      "skillPath": "skills/finesse-term/SKILL.md",
+      "computedHash": "8755accc7d22c878f813404739bbebe71148ec0c935c3afa014e8b0df12b4624"
+    },
+    "finesse-ui": {
+      "source": "mouse-lin/finesse-skill",
+      "sourceType": "github",
+      "skillPath": "skills/finesse-ui/SKILL.md",
+      "computedHash": "f45e245159f469c66ae0d55ef6809eff31082df1e8a4fe0682f3d28795b56ab7"
+    },
+    "frame-smith": {
+      "source": "mouse-lin/frame-smith",
+      "sourceType": "github",
+      "skillPath": "skills/frame-smith/SKILL.md",
+      "computedHash": "5022a1f1b8fdc4d7f846f6650cd56a1bac5b0a797d72468ccb36015b45ffa3ef"
+    }
+  }
+}

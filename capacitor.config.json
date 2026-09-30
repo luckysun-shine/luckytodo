@@ -9,24 +9,24 @@
   "ios": {
     "contentInset": "automatic",
     "preferredContentMode": "mobile",
-    "backgroundColor": "#0a1628",
+    "backgroundColor": "#0c1219",
     "scheme": "LuckyTodo"
   },
   "plugins": {
     "SplashScreen": {
       "launchShowDuration": 0,
       "launchAutoHide": true,
-      "backgroundColor": "#0a1628",
+      "backgroundColor": "#0c1219",
       "androidSplashResourceName": "splash",
       "showSpinner": false
     },
     "StatusBar": {
       "style": "DARK",
-      "backgroundColor": "#0a1628"
+      "backgroundColor": "#0c1219"
     },
     "LocalNotifications": {
       "smallIcon": "ic_stat_icon",
-      "iconColor": "#3dd6c6"
+      "iconColor": "#4d8fff"
     }
   }
 }

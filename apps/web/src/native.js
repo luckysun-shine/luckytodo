@@ -33,7 +33,7 @@ export async function initNative() {
 
   try {
     if (StatusBar?.setStyle) await StatusBar.setStyle({ style: 'DARK' });
-    if (StatusBar?.setBackgroundColor) await StatusBar.setBackgroundColor({ color: '#0a1628' });
+    if (StatusBar?.setBackgroundColor) await StatusBar.setBackgroundColor({ color: '#0c1219' });
   } catch {
     /* ignore */
   }
