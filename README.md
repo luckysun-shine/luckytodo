@@ -7,6 +7,7 @@
 | `apps/api` | Node 22 家庭 API（SQLite + 媒体卷），离线同步推拉、成员、头像/附件 |
 | `apps/web` | 离线优先 Web 客户端（IndexedDB + 同步队列 + PWA） |
 | `ios/` | Capacitor iOS 工程（Xcode / 全能签） |
+| `android/` | Capacitor Android 工程（Android Studio / APK·AAB） |
 | `deploy/` | 飞牛 Docker Compose |
 | `workspace/` | 讨论、PRD、HTML 原型 |
 
@@ -64,6 +65,23 @@ npx cap open ios
 - 提醒：原生端用 Local Notifications；浏览器/PWA 用 Web Notification。
 - 重签名场景下不以 APNs 推送为准。
 
+## 打 APK / AAB（Android Studio）
+
+本仓库已包含 `android/` Capacitor 工程、应用图标与启动图。**完整步骤见 [`android/PACKAGING.md`](./android/PACKAGING.md)**。
+
+```bash
+npm install
+npx cap sync android
+npx cap open android
+```
+
+在 Android Studio 中真机 Run 验证后：
+
+- Debug 试用：`Build → Build APK(s)`，或 `cd android && ./gradlew assembleDebug`
+- 正式包：配置 `android/keystore.properties` 后 `./gradlew assembleRelease`（APK）或 `bundleRelease`（AAB）
+
+Android 端与 iOS / Web 共用同一套业务；主屏组件仅 iOS 提供。
+
 ## 已实现能力（对照 v003 + 后续迭代）
 
 - 强制本机登录；NAS 可选
@@ -72,8 +90,8 @@ npx cap open ios
 - 头像与附件，单文件 ≤ 20MB，单条最多 9 个
 - 皮肤：夜航 / 日间 / 暖纸；字号标准 / 大
 - 启动闪屏 + PWA Service Worker + LuckyTodo Logo
-- Capacitor：StatusBar / SplashScreen / LocalNotifications / Haptics
-- **主屏组件（v004）**：今日提醒 + 家庭日历 WidgetKit；App Group 快照；组件内添加待办（iOS 17+）。详见 `ios/WIDGETS.md`
+- Capacitor（iOS + Android）：StatusBar / SplashScreen / LocalNotifications / Haptics
+- **主屏组件（v004，仅 iOS）**：今日提醒 + 家庭日历 WidgetKit；App Group 快照；组件内添加待办（iOS 17+）。详见 `ios/WIDGETS.md`
 
 ## 主屏组件（iOS）
 

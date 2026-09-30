@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">LuckyTodo</string>
+    <string name="title_activity_main">LuckyTodo</string>
+    <string name="package_name">family.luckytodo.app</string>
+    <string name="custom_url_scheme">family.luckytodo.app</string>
+</resources>

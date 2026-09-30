@@ -4,11 +4,11 @@ apps/api/data/
 *.sqlite-*
 .DS_Store
 dist/
-android/
 .idea/
 .vscode/
+*.apk
+*.aab
 ios/App/Pods/
 ios/App/App/public/
 ios/DerivedData/
 *.xcuserstate
-

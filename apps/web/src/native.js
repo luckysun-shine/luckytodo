@@ -48,7 +48,12 @@ export async function initNative() {
   try {
     if (App?.addListener) {
       App.addListener('backButton', ({ canGoBack }) => {
-        if (canGoBack) window.history.back();
+        if (canGoBack) {
+          window.history.back();
+          return;
+        }
+        // Android hardware back on root screen: leave the app.
+        if (typeof App.exitApp === 'function') App.exitApp();
       });
     }
   } catch {
