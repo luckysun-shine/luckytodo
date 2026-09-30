@@ -7,8 +7,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="LuckyTodo">
   <meta name="application-name" content="LuckyTodo">
-  <meta name="theme-color" content="#121212">
-  <meta name="msapplication-TileColor" content="#121212">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="msapplication-TileColor" content="#ffffff">
   <meta name="msapplication-TileImage" content="./public/icon-144.png">
   <title>LuckyTodo</title>
   <link rel="icon" href="./public/favicon.png" type="image/png" sizes="32x32">
@@ -19,17 +19,17 @@
   <link rel="apple-touch-icon" sizes="180x180" href="./public/icon-180.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="manifest" href="./public/manifest.webmanifest">
   <style>
-    html, body { margin: 0; height: 100%; background: #121212; }
+    html, body { margin: 0; height: 100%; background: #f3f5f8; }
     #boot-splash {
       position: fixed; inset: 0; z-index: 9999;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       gap: 16px;
-      background: #121212;
-      color: #ffffff;
-      font-family: "Lato", "Noto Sans SC", sans-serif;
+      background: #ffffff;
+      color: #1c1c1e;
+      font-family: "Plus Jakarta Sans", "Noto Sans SC", sans-serif;
       transition: opacity .35s cubic-bezier(0.16, 1, 0.3, 1), visibility .35s;
     }
     #boot-splash.hide { opacity: 0; visibility: hidden; pointer-events: none; }
@@ -40,7 +40,7 @@
       font-weight: 700; font-size: 2rem; letter-spacing: 0;
     }
     #boot-splash .sub {
-      margin: 0; color: #afafaf; font-size: 0.95rem; font-weight: 400;
+      margin: 0; color: #8e8e93; font-size: 0.95rem; font-weight: 500;
     }
   </style>
 </head>
@@ -50,7 +50,7 @@
     <div class="name">LuckyTodo</div>
     <p class="sub">家庭待办 · 正在启动</p>
   </div>
-  <div id="app" data-theme="night" data-font="standard"></div>
+  <div id="app" data-theme="day" data-font="standard"></div>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

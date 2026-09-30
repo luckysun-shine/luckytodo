@@ -21,7 +21,8 @@ function dayKey(d) {
 const state = {
   tab: 'today',
   online: navigator.onLine,
-  theme: localStorage.getItem('lt_theme') || 'night',
+  theme: localStorage.getItem('lt_theme') || 'day',
+  homeFilter: 'open',
   font: localStorage.getItem('lt_font') || 'standard',
   toastTimer: null,
   screen: 'boot',
@@ -50,7 +51,7 @@ window.addEventListener('offline', () => {
 });
 
 const icons = {
-  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"/></svg>',
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></svg>',
   today: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 11h16M4 7h16M8 3v4M16 3v4"/><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M8 15h3M13 15h3"/></svg>',
   cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>',
   plans: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg>',
@@ -75,6 +76,9 @@ function toast(msg) {
 function applyChrome() {
   root.dataset.theme = state.theme;
   root.dataset.font = state.font;
+  const color = state.theme === 'night' ? '#121212' : state.theme === 'paper' ? '#fbf7f1' : '#ffffff';
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color);
+  document.body.style.background = state.theme === 'night' ? '#121212' : '#f3f5f8';
 }
 
 function appendNodes(parent, ...nodes) {
@@ -742,16 +746,14 @@ function renderMerge() {
 function tabs() {
   const items = [
     ['today', '首页', icons.home],
-    ['cal', '日历', icons.cal],
-    null,
     ['plans', '计划', icons.plans],
+    ['cal', '日历', icons.cal],
     ['me', '我的', icons.me],
   ];
   return h(
     'nav',
     { className: 'tabs', role: 'tablist', 'aria-label': '主导航' },
     items.map((item) => {
-      if (!item) return h('div', { className: 'tabs-gap', 'aria-hidden': 'true' });
       const [id, label, icon] = item;
       const active = state.tab === id || (id === 'me' && state.tab === 'insights');
       return h('button', {
@@ -814,6 +816,22 @@ function emptyState(title, body, cta, onClick) {
   ]);
 }
 
+const TILE_TONES = ['green', 'red', 'teal'];
+const PRIO_LABEL = { high: '高', medium: '中', low: '低' };
+
+function faceStack(ids) {
+  const people = (ids || [])
+    .map((id) => (state.members || []).find((m) => m.id === id))
+    .filter(Boolean);
+  const shown = people.slice(0, 3);
+  if (!shown.length) return null;
+  const extra = people.length - shown.length;
+  return h('div', { className: 'faces', 'aria-hidden': 'true' }, [
+    ...shown.map((m) => h('span', { className: 'face', text: (m.displayName || '?').slice(0, 1) })),
+    extra > 0 ? h('span', { className: 'face', text: `+${extra}` }) : null,
+  ]);
+}
+
 function todoCard(t, done, me) {
   const meta = [
     t.payload.dueAt ? fmt(t.payload.dueAt) : '今天',
@@ -821,6 +839,7 @@ function todoCard(t, done, me) {
   ]
     .filter(Boolean)
     .join(' · ');
+  const prio = PRIO_LABEL[t.payload.priority] ? t.payload.priority : null;
   return h('div', { className: `todo-row ${done ? 'done' : ''}` }, [
     h('button', {
       className: `check ${done ? 'on' : ''}`,
@@ -837,13 +856,12 @@ function todoCard(t, done, me) {
     }),
     h('div', { className: 'grow' }, [
       h('h3', { text: t.payload.title }),
-      done
-        ? h('p', { className: 'task-time', text: meta })
-        : h('div', { className: 'task-meta' }, [
-            h('span', { className: 'task-time', text: meta }),
-            h('span', { className: 'task-chip', text: '待办' }),
-            t.payload.dueAt ? h('span', { className: 'task-flag', text: '优先' }) : null,
-          ]),
+      t.payload.notes && !done ? h('p', { className: 'task-time', text: t.payload.notes }) : null,
+      h('div', { className: 'task-meta' }, [
+        h('span', { className: 'task-time', text: meta }),
+        prio ? h('span', { className: `task-flag ${prio}`, text: PRIO_LABEL[prio] }) : null,
+        faceStack(t.payload.assigneeIds),
+      ]),
     ]),
   ]);
 }
@@ -853,7 +871,7 @@ async function renderTodayBody() {
   const plans = await listActive('plan');
   const notes = await listActive('note');
   const me = api.getMember();
-  const wrap = h('div');
+  const wrap = h('div', { className: 'dash' });
   const q = (state.query || '').trim().toLowerCase();
   const match = (title) => !q || String(title || '').toLowerCase().includes(q);
   const visibleTodos = todos.filter((t) => match(t.payload.title));
@@ -878,83 +896,112 @@ async function renderTodayBody() {
       try { next.setSelectionRange(pos, pos); } catch { /* search inputs may reject selection */ }
     });
   });
+  const name = me?.displayName || '家人';
   appendNodes(
     wrap,
-    h('p', { className: 'muted', text: fmtDateNice() }),
+    h('div', { className: 'dash-head' }, [
+      h('div', {}, [
+        h('h2', { text: `欢迎，${name}` }),
+        h('p', { text: fmtDateNice() }),
+      ]),
+      h('button', {
+        className: 'avatar',
+        type: 'button',
+        'aria-label': '打开个人页',
+        text: name.slice(0, 1),
+        onClick: () => {
+          state.tab = 'me';
+          render();
+        },
+      }),
+    ]),
     h('label', { className: 'task-search' }, [
       h('span', { html: icons.search, 'aria-hidden': 'true' }),
       searchInput,
     ])
   );
 
-  if (!visibleTodos.length) {
+  const activePlans = plans.filter((x) => !x.payload.archived && match(x.payload.title));
+  const visiblePlans = activePlans.filter((p) => {
+    const execs = p.payload.executorIds || [];
+    return !(me?.role === 'child' && !execs.includes(me.id));
+  });
+  appendNodes(
+    wrap,
+    h('div', { className: 'dash-section' }, [
+      h('h2', { text: '我的计划' }),
+      h('button', {
+        type: 'button',
+        text: '全部',
+        onClick: () => {
+          state.tab = 'plans';
+          render();
+        },
+      }),
+    ])
+  );
+  if (!visiblePlans.length) {
     appendNodes(
       wrap,
-      emptyState(
-        q ? '没有匹配的待办' : '今天想做什么？',
-        q ? '换个关键词试试。' : '点下方 + 添加任务',
-        q ? null : '添加待办',
-        q ? null : () => openCreateForm('todo')
-      )
+      h('p', { className: 'muted', text: '还没有计划。建一个，让家人各自打卡。' }),
+      h('button', {
+        className: 'btn secondary',
+        style: 'margin-top:10px',
+        text: '新建计划',
+        onClick: () => openCreateForm('plan'),
+      })
     );
   } else {
-    appendNodes(wrap, h('div', { className: 'fold', text: `未完成  ${openTodos.length}` }));
-    if (!openTodos.length) appendNodes(wrap, h('p', { className: 'muted', text: '未完成的待办都勾完了。' }));
-    for (const t of openTodos) appendNodes(wrap, todoCard(t, false, me));
-    appendNodes(wrap, h('div', { className: 'fold', text: `已完成  ${doneTodos.length}` }));
-    if (!doneTodos.length) appendNodes(wrap, h('p', { className: 'muted', text: '还没有完成的待办。' }));
-    for (const t of doneTodos) appendNodes(wrap, todoCard(t, true, me));
-  }
-
-  appendNodes(wrap, h('div', { className: 'section-label', text: '今日计划' }));
-  const activePlans = plans.filter((x) => !x.payload.archived && match(x.payload.title));
-  if (!activePlans.length) {
-    appendNodes(
-      wrap,
-      emptyState('还没有计划', '把每天阅读、运动做成计划，家人各自打卡。', '新建计划', () => openCreateForm('plan'))
-    );
-  }
-  for (const p of activePlans) {
-    const execs = p.payload.executorIds || [];
-    const mine = !me || execs.includes(me.id) || execs.length === 0;
-    if (me?.role === 'child' && !execs.includes(me.id)) continue;
-    const prog = milestoneProgress(p.payload.milestones);
-    appendNodes(
-      wrap,
-      h('div', { className: 'card pressable', onClick: () => openPlanDetail(p.id) }, [
-        h('h3', { text: p.payload.title }),
-        h('p', {
-          text: [
-            `${execs.length || 1} 人执行`,
-            p.payload.reminder ? `提醒 ${p.payload.reminder}` : null,
-            prog ? `里程碑 ${prog.done}/${prog.total}` : null,
-          ]
-            .filter(Boolean)
-            .join(' · '),
-        }),
-        mine
-          ? h('button', {
-              className: 'btn secondary',
-              style: 'margin-top:12px',
-              text: '打卡',
-              onClick: async (e) => {
-                e.stopPropagation();
-                const feedback = prompt('一句反馈（可空）') || '';
-                await api.saveLocalEntity('checkin', {
-                  planId: p.id,
-                  memberId: me?.id || 'guest',
-                  date: dayKey(new Date()),
-                  status: 'done',
-                  feedback,
-                });
-                toast('打卡成功');
-                render();
-                maybeSync();
-              },
-            })
-          : null,
-      ])
-    );
+    const rail = h('div', { className: 'plan-rail' });
+    visiblePlans.forEach((p, i) => {
+      const execs = p.payload.executorIds || [];
+      const mine = !me || execs.includes(me.id) || execs.length === 0;
+      const prog = milestoneProgress(p.payload.milestones);
+      const pct = prog && prog.total ? Math.round((prog.done / prog.total) * 100) : 0;
+      rail.append(
+        h('div', {
+          className: `plan-tile tone-${TILE_TONES[i % TILE_TONES.length]}`,
+          role: 'link',
+          tabIndex: 0,
+          onClick: () => openPlanDetail(p.id),
+          onKeydown: (e) => {
+            if (e.key === 'Enter') openPlanDetail(p.id);
+          },
+        }, [
+          h('div', { className: 'plan-tile-top' }, [
+            h('span', { text: prog ? `${prog.total} 项` : `${execs.length || 1} 人` }),
+            faceStack(execs.length ? execs : me ? [me.id] : []),
+          ]),
+          h('strong', { text: p.payload.title }),
+          h('div', { className: 'plan-bar' }, [h('i', { style: `width:${pct}%` })]),
+          h('div', { className: 'plan-foot' }, [
+            h('span', { text: prog ? `进度 ${prog.done}/${prog.total}` : '进行中' }),
+            mine
+              ? h('button', {
+                  type: 'button',
+                  className: 'plan-check',
+                  text: '打卡',
+                  onClick: async (e) => {
+                    e.stopPropagation();
+                    const feedback = prompt('一句反馈（可空）') || '';
+                    await api.saveLocalEntity('checkin', {
+                      planId: p.id,
+                      memberId: me?.id || 'guest',
+                      date: dayKey(new Date()),
+                      status: 'done',
+                      feedback,
+                    });
+                    toast('打卡成功');
+                    render();
+                    maybeSync();
+                  },
+                })
+              : null,
+          ]),
+        ])
+      );
+    });
+    wrap.append(rail);
   }
 
   const today = dayKey(new Date());
@@ -967,8 +1014,45 @@ async function renderTodayBody() {
       }
     }
   }
+  const dueToday = openTodos.filter((t) => t.payload.dueAt && localDayKeyFromIso(t.payload.dueAt) <= today);
+  appendNodes(
+    wrap,
+    h('div', { className: 'dash-section' }, [
+      h('h2', { text: '今日提醒' }),
+      h('button', {
+        type: 'button',
+        text: '全部',
+        onClick: () => {
+          state.tab = 'cal';
+          render();
+        },
+      }),
+    ])
+  );
+  if (!dueToday.length && !dueMilestones.length) {
+    appendNodes(wrap, h('p', { className: 'muted', text: '今天没有到期的提醒。' }));
+  } else {
+    const chips = h('div', { className: 'remind-rail' });
+    const tones = ['', 'teal', 'green'];
+    dueToday.slice(0, 8).forEach((t, i) => {
+      chips.append(
+        h('div', { className: `remind-chip ${tones[i % 3]}` }, [
+          h('i'),
+          h('span', { text: t.payload.title }),
+        ])
+      );
+    });
+    dueMilestones.slice(0, 6).forEach((item, i) => {
+      chips.append(
+        h('div', { className: `remind-chip ${tones[(i + 1) % 3]}` }, [
+          h('i'),
+          h('span', { text: item.ms.title }),
+        ])
+      );
+    });
+    wrap.append(chips);
+  }
   if (dueMilestones.length) {
-    appendNodes(wrap, h('div', { className: 'section-label', text: `里程碑 · ${dueMilestones.length} 个待处理` }));
     for (const { plan, ms } of dueMilestones.slice(0, 8)) {
       const tone = milestoneTone(ms);
       appendNodes(
@@ -995,9 +1079,50 @@ async function renderTodayBody() {
     }
   }
 
-  appendNodes(wrap, h('div', { className: 'section-label', text: '最近便签' }));
+  const filter = state.homeFilter || 'open';
+  const taskList = filter === 'done'
+    ? doneTodos
+    : filter === 'today'
+      ? dueToday
+      : openTodos;
+  appendNodes(
+    wrap,
+    h('div', { className: 'dash-section' }, [h('h2', { text: '我的任务' })]),
+    h('div', { className: 'task-tabs', role: 'tablist' }, [
+      ['open', `待办 ${openTodos.length}`],
+      ['today', `今天 ${dueToday.length}`],
+      ['done', `已完成 ${doneTodos.length}`],
+    ].map(([id, label]) =>
+      h('button', {
+        type: 'button',
+        className: filter === id ? 'on' : '',
+        role: 'tab',
+        'aria-selected': filter === id,
+        text: label,
+        onClick: () => {
+          state.homeFilter = id;
+          render();
+        },
+      })
+    ))
+  );
+  if (!taskList.length) {
+    appendNodes(
+      wrap,
+      emptyState(
+        q ? '没有匹配的待办' : filter === 'done' ? '还没有完成的待办' : '今天想做什么？',
+        q ? '换个关键词试试。' : '点右下角 + 添加任务',
+        q || filter === 'done' ? null : '添加待办',
+        q || filter === 'done' ? null : () => openCreateForm('todo')
+      )
+    );
+  } else {
+    for (const t of taskList) appendNodes(wrap, todoCard(t, filter === 'done', me));
+  }
+
+  appendNodes(wrap, h('div', { className: 'dash-section' }, [h('h2', { text: '最近便签' })]));
   if (!notes.length) {
-    appendNodes(wrap, h('p', { className: 'muted', text: '没有便签。点下方 + 可随手记。' }));
+    appendNodes(wrap, h('p', { className: 'muted', text: '没有便签。点右下角 + 可随手记。' }));
   }
   for (const n of notes.filter((item) => match(item.payload.title)).slice(0, 4)) {
     appendNodes(
@@ -1134,7 +1259,7 @@ async function renderCalBody() {
   if (!dayItems.length) {
     appendNodes(
       list,
-      emptyState('这天还没有安排', '点下方 + 新建日程，或给待办加上截止日。', '新建日程', () => openCreateForm('event'))
+      emptyState('这天还没有安排', '点右下角 + 新建日程，或给待办加上截止日。', '新建日程', () => openCreateForm('event'))
     );
   } else {
     for (const it of dayItems) {
@@ -1590,6 +1715,14 @@ async function renderMeBody() {
       h('div', { className: 'profile-stat', text: `${openCount} 件未完成` }),
       h('div', { className: 'profile-stat', text: `${doneCount} 件已完成` }),
     ]),
+    state.members.length
+      ? h('div', { className: 'member-rail' }, state.members.filter((m) => !m.disabled).map((m) =>
+          h('div', { className: 'member-pill' }, [
+            h('span', { className: 'face', text: (m.displayName || '?').slice(0, 1) }),
+            h('span', { text: m.displayName || '成员' }),
+          ])
+        ))
+      : null,
     h('button', {
       type: 'button',
       className: 'settings-row',
@@ -1783,8 +1916,8 @@ async function renderMeBody() {
     })(),
     h('div', { className: 'section-label', text: '外观' }),
     h('div', { className: 'seg', style: 'margin-bottom:12px' }, [
-      ['night', '夜航'],
-      ['day', '日间'],
+      ['night', '深色'],
+      ['day', '浅色'],
       ['paper', '暖纸'],
     ].map(([id, label]) =>
       h('button', {
@@ -2027,6 +2160,7 @@ function defaultDraft(type) {
       reminderKind: 'none',
       customReminder: '',
       assigneeIds: [id],
+      priority: 'medium',
       attachments: [],
     };
   }
@@ -2457,14 +2591,29 @@ function renderTodoForm(f) {
       : null;
 
   return formShell(
-    '写待办',
+    '新建任务',
     [
-      fieldEl('标题', title, err.title),
-      fieldEl('补充说明', notes),
       fieldEl('截止时间', due),
+      h('div', { className: 'field' }, [
+        h('label', { text: '优先级' }),
+        h('div', { className: 'prio-row' }, [
+          ['high', '高'],
+          ['medium', '中'],
+          ['low', '低'],
+        ].map(([id, label]) =>
+          h('button', {
+            type: 'button',
+            className: `prio prio-${id} ${(d.priority || 'medium') === id ? 'on' : ''}`,
+            text: label,
+            onClick: () => draftPatch({ priority: id }),
+          })
+        )),
+      ]),
+      fieldEl('标题', title, err.title),
+      fieldEl('备注', notes),
       fieldEl('提醒', remind),
       custom,
-      peoplePicker('执行人', d.assigneeIds || [], (ids) => draftPatch({ assigneeIds: ids }), err.assignees),
+      peoplePicker('添加成员', d.assigneeIds || [], (ids) => draftPatch({ assigneeIds: ids }), err.assignees),
       attachBlock(d, 'todo'),
     ],
     async () => {
@@ -2496,6 +2645,7 @@ function renderTodoForm(f) {
           reminderKind: d.reminderKind,
           remindAt: computeTodoRemindAt(d),
           assigneeIds: assignees,
+          priority: d.priority || 'medium',
           completions: {},
           attachmentIds,
         });
@@ -2920,7 +3070,6 @@ async function renderHome() {
     me: renderMeBody,
   };
   const body = await bodyMap[state.tab]();
-  const me = api.getMember();
   const back =
     state.tab === 'insights'
       ? h('button', {
@@ -2933,28 +3082,18 @@ async function renderHome() {
           },
         })
       : h('span', { className: 'appbar-side' });
-  const right =
-    state.tab === 'today' && me
-      ? h('button', {
-          className: 'avatar sm',
-          'aria-label': '打开个人页',
-          text: me.displayName?.[0] || '?',
-          onClick: () => {
-            state.tab = 'me';
-            render();
-          },
-        })
-      : h('span', { className: 'appbar-side' });
-  const top = h('div', { className: 'top appbar' }, [
-    back,
-    h('h1', { text: titles[state.tab] }),
-    right,
-  ]);
+  const top = state.tab === 'today'
+    ? null
+    : h('div', { className: 'top appbar' }, [
+        back,
+        h('h1', { text: titles[state.tab] }),
+        h('span', { className: 'appbar-side' }),
+      ]);
 
   return h('div', { className: 'screen' }, [
     top,
     offlineBanner(),
-    h('div', { className: 'scroller' }, [body]),
+    h('div', { className: state.tab === 'today' ? 'scroller dash-scroll' : 'scroller' }, [body]),
     h('button', {
       className: 'fab',
       'aria-label': '添加',

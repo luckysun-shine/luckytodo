@@ -32,8 +32,10 @@ export async function initNative() {
   const App = plugin('App');
 
   try {
-    if (StatusBar?.setStyle) await StatusBar.setStyle({ style: 'LIGHT' });
-    if (StatusBar?.setBackgroundColor) await StatusBar.setBackgroundColor({ color: '#121212' });
+    const theme = localStorage.getItem('lt_theme') || 'day';
+    const dark = theme === 'night';
+    if (StatusBar?.setStyle) await StatusBar.setStyle({ style: dark ? 'LIGHT' : 'DARK' });
+    if (StatusBar?.setBackgroundColor) await StatusBar.setBackgroundColor({ color: dark ? '#121212' : '#ffffff' });
   } catch {
     /* ignore */
   }
