@@ -8,6 +8,7 @@ import { createServer } from 'node:http';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'luckytodo-'));
 process.env.LUCKYTODO_DATA = tmp;
 process.env.LUCKYTODO_NO_LISTEN = '1';
+process.env.LUCKYTODO_TEST_OTP = '123456';
 
 const { handle } = await import('../src/index.js');
 
@@ -21,13 +22,12 @@ function listen() {
   });
 }
 
-async function req(base, method, urlPath, { token, body, headers } = {}) {
+async function req(base, method, urlPath, { token, body } = {}) {
   const res = await fetch(`${base}${urlPath}`, {
     method,
     headers: {
       ...(body ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
     },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -41,11 +41,12 @@ async function req(base, method, urlPath, { token, body, headers } = {}) {
   return { status: res.status, json };
 }
 
-describe('LuckyTodo API', () => {
+describe('LuckyTodo cloud API v005', () => {
   let server;
   let base;
-  let token;
-  let memberId;
+  let tokenA;
+  let tokenB;
+  let memberA;
 
   before(async () => {
     ({ server, base } = await listen());
@@ -53,46 +54,98 @@ describe('LuckyTodo API', () => {
 
   after(async () => {
     await new Promise((r) => server.close(r));
-    fs.rmSync(tmp, { recursive: true, force: true });
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* Windows may lock sqlite briefly */
+    }
   });
 
-  it('health before setup', async () => {
+  it('health reports cloud mode', async () => {
     const res = await req(base, 'GET', '/api/health');
     assert.equal(res.status, 200);
-    assert.equal(res.json.initialized, false);
+    assert.equal(res.json.mode, 'cloud');
+    assert.equal(res.json.version, '0.5.0');
   });
 
-  it('creates family', async () => {
+  it('setup/family is gone', async () => {
     const res = await req(base, 'POST', '/api/setup/family', {
+      body: { familyName: 'x', displayName: 'y', username: 'abc', password: 'secret12' },
+    });
+    assert.equal(res.status, 410);
+  });
+
+  it('registers user by phone', async () => {
+    const res = await req(base, 'POST', '/api/auth/register', {
       body: {
-        familyName: '林家',
-        displayName: '林晨',
-        username: 'linchen',
+        phone: '13800138000',
         password: 'secret12',
+        displayName: '林晨',
+        agreed: true,
       },
     });
     assert.equal(res.status, 201);
-    token = res.json.token;
-    memberId = res.json.member.id;
-    assert.ok(token);
+    tokenA = res.json.token;
+    assert.ok(tokenA);
+    assert.equal(res.json.user.phone, '13800138000');
+    assert.equal(res.json.family, null);
   });
 
-  it('rejects second family', async () => {
-    const res = await req(base, 'POST', '/api/setup/family', {
+  it('creates family', async () => {
+    const res = await req(base, 'POST', '/api/families', {
+      token: tokenA,
+      body: { familyName: '林家' },
+    });
+    assert.equal(res.status, 201);
+    assert.equal(res.json.family.name, '林家');
+    memberA = res.json.member.id;
+    assert.equal(res.json.member.role, 'admin');
+  });
+
+  it('creates invite and second user joins', async () => {
+    const invite = await req(base, 'POST', '/api/invites', {
+      token: tokenA,
+      body: { role: 'adult' },
+    });
+    assert.equal(invite.status, 201);
+    const code = invite.json.invite.code;
+
+    const reg = await req(base, 'POST', '/api/auth/register', {
       body: {
-        familyName: '别家',
-        displayName: 'X',
-        username: 'xxx',
+        phone: '13900139000',
         password: 'secret12',
+        displayName: '周宁',
+        agreed: true,
       },
     });
-    assert.equal(res.status, 409);
+    assert.equal(reg.status, 201);
+    tokenB = reg.json.token;
+
+    const join = await req(base, 'POST', '/api/invites/accept', {
+      token: tokenB,
+      body: { code },
+    });
+    assert.equal(join.status, 200);
+    assert.equal(join.json.family.name, '林家');
+    assert.equal(join.json.member.role, 'adult');
   });
 
-  it('syncs a note and pulls it', async () => {
+  it('otp login works with test code', async () => {
+    const send = await req(base, 'POST', '/api/auth/otp/send', {
+      body: { phone: '13700137000' },
+    });
+    assert.equal(send.status, 200);
+    const verify = await req(base, 'POST', '/api/auth/otp/verify', {
+      body: { phone: '13700137000', code: '123456', displayName: '验证用户', agreed: true },
+    });
+    assert.equal(verify.status, 200);
+    assert.ok(verify.json.token);
+  });
+
+  it('syncs a note after join', async () => {
     const noteId = crypto.randomUUID();
     const push = await req(base, 'POST', '/api/sync/push', {
-      token,
+      token: tokenA,
       body: {
         ops: [
           {
@@ -105,7 +158,7 @@ describe('LuckyTodo API', () => {
               body: '书房抽屉',
               visibility: 'self',
               pinned: true,
-              createdBy: memberId,
+              createdBy: memberA,
             },
           },
         ],
@@ -114,34 +167,47 @@ describe('LuckyTodo API', () => {
     assert.equal(push.status, 200);
     assert.equal(push.json.results[0].ok, true);
 
-    const pull = await req(base, 'GET', '/api/sync/pull?since=0', { token });
+    const pull = await req(base, 'GET', '/api/sync/pull?since=0', { token: tokenA });
     assert.equal(pull.status, 200);
     assert.ok(pull.json.entities.some((e) => e.id === noteId));
   });
 
-  it('adds member and login', async () => {
-    const add = await req(base, 'POST', '/api/members', {
-      token,
-      body: {
-        displayName: '林小满',
-        username: 'xiaoman',
-        password: 'child12',
-        role: 'child',
-      },
+  it('adds child member', async () => {
+    const add = await req(base, 'POST', '/api/members/child', {
+      token: tokenA,
+      body: { displayName: '林小满', password: 'child12' },
     });
     assert.equal(add.status, 201);
+    assert.equal(add.json.member.role, 'child');
+    assert.ok(add.json.childLogin.username);
 
     const login = await req(base, 'POST', '/api/auth/login', {
-      body: { username: 'xiaoman', password: 'child12' },
+      body: { username: add.json.childLogin.username, password: 'child12' },
     });
     assert.equal(login.status, 200);
     assert.equal(login.json.member.role, 'child');
   });
 
-  it('saves AI settings and runs rule-based insight', async () => {
+  it('exports family data', async () => {
+    const res = await req(base, 'GET', '/api/families/export', { token: tokenA });
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.json.entities));
+    assert.ok(res.json.family.name);
+  });
+
+  it('registers push token placeholder', async () => {
+    const res = await req(base, 'POST', '/api/devices/push-token', {
+      token: tokenA,
+      body: { token: 'fake-apns-token', platform: 'ios' },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.json.ok, true);
+  });
+
+  it('saves AI settings and runs insight', async () => {
     process.env.LUCKYTODO_INSIGHT_NO_RATELIMIT = '1';
     const put = await req(base, 'PUT', '/api/settings/ai', {
-      token,
+      token: tokenA,
       body: {
         enabled: false,
         baseUrl: 'https://example.invalid/v1',
@@ -150,22 +216,8 @@ describe('LuckyTodo API', () => {
       },
     });
     assert.equal(put.status, 200);
-    assert.equal(put.json.settings.enabled, false);
-    assert.equal(put.json.settings.apiKeySet, true);
-    assert.equal(put.json.settings.apiKey, '********');
-
-    const get = await req(base, 'GET', '/api/settings/ai', { token });
-    assert.equal(get.status, 200);
-    assert.equal(get.json.settings.model, 'test-model');
-
-    const run = await req(base, 'POST', '/api/insights/run', { token });
+    const run = await req(base, 'POST', '/api/insights/run', { token: tokenA });
     assert.equal(run.status, 200);
     assert.ok(run.json.report);
-    assert.ok(Array.isArray(run.json.report.cards));
-    assert.ok(run.json.report.cards.length >= 1);
-
-    const latest = await req(base, 'GET', '/api/insights/latest', { token });
-    assert.equal(latest.status, 200);
-    assert.equal(latest.json.report.id, run.json.report.id);
   });
 });

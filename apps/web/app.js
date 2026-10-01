@@ -4,6 +4,7 @@ import * as db from './src/db.js';
 import * as reminders from './src/reminders.js';
 import * as native from './src/native.js';
 import * as widget from './src/widgetBridge.js';
+import { collectCheckinPayload } from './src/checkin.js';
 
 const style = document.createElement('style');
 style.textContent = css;
@@ -19,7 +20,7 @@ function dayKey(d) {
 }
 
 const state = {
-  tab: 'today',
+  tab: 'home',
   online: navigator.onLine,
   theme: localStorage.getItem('lt_theme') || 'day',
   homeFilter: 'open',
@@ -32,6 +33,7 @@ const state = {
   query: '',
   mergeCount: 0,
   planId: null,
+  authMode: 'password',
   calCursor: (() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -51,10 +53,13 @@ window.addEventListener('offline', () => {
 });
 
 const icons = {
-  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></svg>',
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"/></svg>',
   today: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 11h16M4 7h16M8 3v4M16 3v4"/><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M8 15h3M13 15h3"/></svg>',
+  todo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M5 6.5 6.2 7.7 8.5 5.2M5 12.5 6.2 13.7 8.5 11.2M5 18.5 6.2 19.7 8.5 17.2"/></svg>',
   cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>',
   plans: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg>',
+  notes: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v4h4M9 12h6M9 16h6"/></svg>',
+  family: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><circle cx="16" cy="9" r="2.4"/><path d="M3.5 19c1.2-3 3.4-4.5 5.5-4.5S13.3 16 14.5 19M14 14.5c1.6 0 3.2.8 4.5 2.5"/></svg>',
   insights: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></svg>',
   me: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.2"/><path d="M5 19.5c1.4-3 3.8-4.5 7-4.5s5.6 1.5 7 4.5"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>',
@@ -125,6 +130,11 @@ async function maybeSync() {
 async function afterLogin(session) {
   api.setSession(session);
   await db.kvSet('serverRevision', session.serverRevision || 0);
+  if (!session.family || !session.member) {
+    state.screen = 'family-gate';
+    render();
+    return;
+  }
   const localCount = await api.countGuestRecords();
   if (localCount > 0) {
     state.screen = 'merge';
@@ -133,12 +143,15 @@ async function afterLogin(session) {
     return;
   }
   state.screen = 'home';
+  state.tab = 'home';
+  await loadMembers();
   await maybeSync();
   render();
 }
 
 async function afterLocalLogin() {
   state.screen = 'home';
+  state.tab = 'home';
   await loadMembers();
   widget.publishWidgetSnapshot().catch(() => {});
   render();
@@ -268,32 +281,60 @@ async function boot() {
   native.registerServiceWorker();
   await native.initNative().catch(() => {});
   bindDeepLinks();
-  if (!api.isLoggedIn()) {
-    state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
+  if (!api.getToken()) {
+    state.screen = 'cloud-login';
     render();
     hideBootSplash();
     widget.publishWidgetSnapshot().catch(() => {});
     return;
   }
+  try {
+    await api.fetchMe();
+  } catch (e) {
+    if (e.status === 401) {
+      api.logout();
+      state.screen = 'cloud-login';
+      render();
+      hideBootSplash();
+      return;
+    }
+  }
+  if (!api.hasFamily()) {
+    state.screen = 'family-gate';
+    render();
+    hideBootSplash();
+    return;
+  }
   state.screen = 'home';
+  state.tab = 'home';
   await loadMembers();
   try {
-    const drafts = await widget.consumeWidgetDrafts();
-    if (drafts?.length) toast(`已从桌面组件同步 ${drafts.length} 条`);
+    await maybeSync();
   } catch {
-    /* ignore */
+    /* offline ok */
   }
   render();
   hideBootSplash();
-  maybeSync().then(render);
-  widget.publishWidgetSnapshot().catch(() => {});
+  widget.consumeWidgetDrafts().then(() => widget.publishWidgetSnapshot()).catch(() => {});
+}
+
+function hideBootSplash() {
+  const el = document.getElementById('boot-splash');
+  if (!el) return;
+  requestAnimationFrame(() => {
+    el.classList.add('hide');
+    setTimeout(() => el.remove(), 400);
+  });
 }
 
 function bindDeepLinks() {
   const apply = (url) => {
     const info = widget.handleDeepLink(url);
     if (!info) return;
-    if (info.tab) state.tab = info.tab;
+    if (info.tab) {
+      // map legacy today -> home
+      state.tab = info.tab === 'today' ? 'home' : info.tab === 'me' ? 'family' : info.tab;
+    }
     if (info.path === 'create' || info.day) {
       openCreateForm(info.type === 'event' ? 'event' : 'todo');
       return;
@@ -311,17 +352,7 @@ function bindDeepLinks() {
       if (data?.url) apply(data.url);
     });
   }
-  // also handle cold start query if present
   if (location.hash.startsWith('#luckytodo')) apply(location.hash.slice(1));
-}
-
-function hideBootSplash() {
-  const el = document.getElementById('boot-splash');
-  if (!el) return;
-  requestAnimationFrame(() => {
-    el.classList.add('hide');
-    setTimeout(() => el.remove(), 400);
-  });
 }
 
 const ICONS_EYE = {
@@ -398,6 +429,244 @@ function authShell({ hero, panel, cta, foot, back, onSubmit }) {
 function setBusy(btn, busy, idleText) {
   btn.disabled = !!busy;
   btn.textContent = busy || idleText;
+}
+
+function renderCloudLogin() {
+  const phone = h('input', {
+    type: 'tel',
+    inputmode: 'numeric',
+    placeholder: '请输入手机号',
+    autocomplete: 'tel',
+    maxlength: '11',
+  });
+  const pass = authPasswordField('密码', { autocomplete: 'current-password' });
+  const code = h('input', { type: 'text', inputmode: 'numeric', placeholder: '6 位验证码', maxlength: '6' });
+  const agreed = h('input', { type: 'checkbox' });
+  const otpMode = state.authMode === 'otp';
+
+  const submit = async () => {
+    try {
+      if (!agreed.checked) return toast('请先同意用户协议与隐私政策');
+      let session;
+      if (otpMode) {
+        session = await api.otpVerify({
+          phone: phone.value.trim(),
+          code: code.value.trim(),
+          agreed: true,
+        });
+      } else {
+        session = await api.login({ phone: phone.value.trim(), password: pass.input.value });
+      }
+      await afterLogin(session);
+    } catch (e) {
+      toast(e.message);
+    }
+  };
+
+  return h('div', { className: 'cloud-auth' }, [
+    h('div', { className: 'cloud-brand' }, [
+      h('img', { src: './public/logo.png', alt: 'LuckyTodo' }),
+      h('h1', { text: 'LuckyTodo' }),
+      h('p', { text: '把小日子，安排得刚刚好' }),
+    ]),
+    h('div', { className: 'cloud-card' }, [
+      h('h2', { text: '欢迎回来' }),
+      h('p', { className: 'lead', text: '登录后，和家人一起开启有序的一天。' }),
+      h('div', { className: 'cloud-switch' }, [
+        h('span', { text: otpMode ? '验证码登录' : '密码登录' }),
+        h('button', {
+          type: 'button',
+          text: otpMode ? '密码登录' : '验证码登录',
+          onClick: () => {
+            state.authMode = otpMode ? 'password' : 'otp';
+            render();
+          },
+        }),
+      ]),
+      fieldEl('手机号', phone),
+      otpMode
+        ? h('div', { className: 'field' }, [
+            h('label', { text: '验证码' }),
+            h('div', { style: 'display:flex;gap:8px' }, [
+              code,
+              h('button', {
+                type: 'button',
+                className: 'btn secondary',
+                text: '获取',
+                style: 'flex:none;min-width:88px',
+                onClick: async () => {
+                  try {
+                    const r = await api.otpSend(phone.value.trim());
+                    toast(r.debugCode ? `验证码 ${r.debugCode}` : '验证码已发送');
+                  } catch (e) {
+                    toast(e.message);
+                  }
+                },
+              }),
+            ]),
+          ])
+        : pass.el,
+      otpMode
+        ? null
+        : h('button', {
+            type: 'button',
+            className: 'link',
+            text: '忘记密码？',
+            style: 'align-self:flex-start;border:0;background:transparent;color:var(--accent-strong);font-weight:700',
+            onClick: () => toast('请使用验证码登录，或联系家人管理员'),
+          }),
+      h('label', { className: 'legal-row' }, [
+        agreed,
+        h('span', {
+          html: '我已阅读并同意<a href="./terms.html" target="_blank">《用户协议》</a>和<a href="./privacy.html" target="_blank">《隐私政策》</a>',
+        }),
+      ]),
+      h('button', { className: 'btn', text: '登录', onClick: submit }),
+    ]),
+    h('p', { className: 'cloud-foot' }, [
+      document.createTextNode('还没有账号？'),
+      h('button', {
+        type: 'button',
+        className: 'link',
+        text: '立即注册',
+        onClick: () => {
+          state.screen = 'cloud-register';
+          render();
+        },
+      }),
+    ]),
+    h('p', { className: 'cloud-foot', text: '小事一起做，生活更轻松' }),
+  ]);
+}
+
+function renderCloudRegister() {
+  const name = h('input', { placeholder: '怎么称呼你', maxlength: '20', autocomplete: 'nickname' });
+  const phone = h('input', { type: 'tel', placeholder: '请输入手机号', maxlength: '11' });
+  const pass = authPasswordField('设置密码', { autocomplete: 'new-password' });
+  const pass2 = authPasswordField('确认密码', { autocomplete: 'new-password' });
+  const agreed = h('input', { type: 'checkbox' });
+  return h('div', { className: 'cloud-auth' }, [
+    h('div', { className: 'cloud-brand' }, [
+      h('img', { src: './public/logo.png', alt: '' }),
+      h('h1', { text: '创建账号' }),
+      h('p', { text: '注册后即可创建或加入家庭' }),
+    ]),
+    h('div', { className: 'cloud-card' }, [
+      fieldEl('显示名', name),
+      fieldEl('手机号', phone),
+      pass.el,
+      pass2.el,
+      h('label', { className: 'legal-row' }, [
+        agreed,
+        h('span', { text: '我已阅读并同意《用户协议》和《隐私政策》' }),
+      ]),
+      h('button', {
+        className: 'btn',
+        text: '注册并登录',
+        onClick: async () => {
+          if (pass.input.value !== pass2.input.value) return toast('两次密码不一致');
+          if (!agreed.checked) return toast('请先同意协议');
+          try {
+            const session = await api.register({
+              phone: phone.value.trim(),
+              password: pass.input.value,
+              displayName: name.value.trim(),
+              agreed: true,
+            });
+            await afterLogin(session);
+          } catch (e) {
+            toast(e.message);
+          }
+        },
+      }),
+    ]),
+    h('p', { className: 'cloud-foot' }, [
+      document.createTextNode('已有账号？'),
+      h('button', {
+        type: 'button',
+        className: 'link',
+        text: '去登录',
+        onClick: () => {
+          state.screen = 'cloud-login';
+          render();
+        },
+      }),
+    ]),
+  ]);
+}
+
+function renderFamilyGate() {
+  const familyName = h('input', { placeholder: '例如：林家', maxlength: '20' });
+  const invite = h('input', {
+    placeholder: '6 位邀请码',
+    maxlength: '8',
+    style: 'text-transform:uppercase',
+  });
+  const mode = state.gateMode || 'create';
+  return h('div', { className: 'cloud-auth' }, [
+    h('div', { className: 'cloud-brand' }, [
+      h('h1', { text: mode === 'join' ? '加入家庭' : '创建家庭' }),
+      h('p', {
+        text:
+          mode === 'join'
+            ? '向家人要一份邀请码，加入后即可同步待办与计划'
+            : '给家里起个名字，你将成为管理员',
+      }),
+    ]),
+    h('div', { className: 'cloud-card' }, [
+      mode === 'join'
+        ? fieldEl('邀请码', invite)
+        : fieldEl('家庭名称', familyName),
+      h('button', {
+        className: 'btn',
+        text: mode === 'join' ? '加入' : '创建',
+        onClick: async () => {
+          try {
+            if (mode === 'join') {
+              await api.acceptInvite(invite.value.trim());
+            } else {
+              await api.createFamily(familyName.value.trim());
+            }
+            const localCount = await api.countGuestRecords();
+            if (localCount > 0) {
+              state.screen = 'merge';
+              state.mergeCount = localCount;
+            } else {
+              state.screen = 'home';
+              state.tab = 'home';
+              await loadMembers();
+              await maybeSync();
+            }
+            render();
+          } catch (e) {
+            toast(e.message);
+          }
+        },
+      }),
+      h('button', {
+        className: 'btn secondary',
+        text: mode === 'join' ? '改为创建家庭' : '我有邀请码',
+        onClick: () => {
+          state.gateMode = mode === 'join' ? 'create' : 'join';
+          render();
+        },
+      }),
+      h('button', {
+        className: 'btn ghost',
+        text: '退出登录',
+        onClick: async () => {
+          try {
+            await api.api('POST', '/api/auth/logout');
+          } catch {
+            /* ignore */
+          }
+          api.logout();
+          state.screen = 'cloud-login';
+          render();
+        },
+      }),
+    ]),
+  ]);
 }
 
 function renderLocalRegister() {
@@ -745,17 +1014,19 @@ function renderMerge() {
 
 function tabs() {
   const items = [
-    ['today', '首页', icons.home],
+    ['home', '首页', icons.home],
+    ['todo', '待办', icons.todo],
     ['plans', '计划', icons.plans],
     ['cal', '日历', icons.cal],
-    ['me', '我的', icons.me],
+    ['notes', '便签', icons.notes],
+    ['family', '家庭', icons.family],
   ];
   return h(
     'nav',
     { className: 'tabs', role: 'tablist', 'aria-label': '主导航' },
     items.map((item) => {
       const [id, label, icon] = item;
-      const active = state.tab === id || (id === 'me' && state.tab === 'insights');
+      const active = state.tab === id;
       return h('button', {
         className: active ? 'active' : '',
         role: 'tab',
@@ -772,9 +1043,9 @@ function tabs() {
 
 function offlineBanner() {
   if (state.hideBanner) return null;
-  if (!api.isFamilyMode()) {
+  if (api.getToken() && !api.hasFamily()) {
     return h('div', { className: 'banner' }, [
-      h('span', { className: 'grow', text: '本机使用中，数据仅保存在此设备。可在「我的」连接家庭服务器开启同步。' }),
+      h('span', { className: 'grow', text: '还没有加入家庭。创建或输入邀请码后即可与家人同步。' }),
       h('button', {
         className: 'x',
         'aria-label': '关闭提示',
@@ -787,7 +1058,7 @@ function offlineBanner() {
       }),
     ]);
   }
-  if (!state.online) {
+  if (!state.online && api.isFamilyMode()) {
     return h('div', { className: 'banner' }, [
       h('span', { className: 'grow', text: '当前离线，改动会在联网后同步' }),
       h('button', {
@@ -983,17 +1254,19 @@ async function renderTodayBody() {
                   text: '打卡',
                   onClick: async (e) => {
                     e.stopPropagation();
-                    const feedback = prompt('一句反馈（可空）') || '';
-                    await api.saveLocalEntity('checkin', {
-                      planId: p.id,
-                      memberId: me?.id || 'guest',
-                      date: dayKey(new Date()),
-                      status: 'done',
-                      feedback,
-                    });
-                    toast('打卡成功');
-                    render();
-                    maybeSync();
+                    try {
+                      const payload = await collectCheckinPayload(api, {
+                        planId: p.id,
+                        memberId: me?.id || 'guest',
+                        date: dayKey(new Date()),
+                      });
+                      await api.saveLocalEntity('checkin', payload);
+                      toast('打卡成功');
+                      render();
+                      maybeSync();
+                    } catch (err) {
+                      toast(err.message);
+                    }
                   },
                 })
               : null,
@@ -1465,17 +1738,19 @@ async function renderPlanDetail() {
         className: 'btn secondary block',
         text: '今日打卡（周期）',
         onClick: async () => {
-          const feedback = prompt('一句反馈（可空）') || '';
-          await api.saveLocalEntity('checkin', {
-            planId: plan.id,
-            memberId: me?.id || 'guest',
-            date: dayKey(new Date()),
-            status: 'done',
-            feedback,
-          });
-          toast('打卡成功');
-          render();
-          maybeSync();
+          try {
+            const payload = await collectCheckinPayload(api, {
+              planId: plan.id,
+              memberId: me?.id || 'guest',
+              date: dayKey(new Date()),
+            });
+            await api.saveLocalEntity('checkin', payload);
+            toast('打卡成功');
+            render();
+            maybeSync();
+          } catch (e) {
+            toast(e.message);
+          }
         },
       }),
     ]),
@@ -3054,46 +3329,447 @@ function renderCreateModal() {
   return null;
 }
 
+async function renderHomeBody() {
+  const me = api.getMember();
+  const user = api.getUser();
+  const name = me?.displayName || user?.displayName || '你好';
+  const plans = (await listActive('plan')).filter((p) => !p.payload.archived);
+  const todos = await listActive('todo');
+  const q = (state.query || '').trim().toLowerCase();
+  const match = (t) => !q || String(t || '').toLowerCase().includes(q);
+  const openTodos = todos.filter(
+    (t) => (t.payload.completions || {})[me?.id || 'guest'] !== 'done' && match(t.payload.title)
+  );
+  const doneRecent = todos.filter(
+    (t) => (t.payload.completions || {})[me?.id || 'guest'] === 'done' && match(t.payload.title)
+  );
+
+  // streak: consecutive daily checkins ending today
+  const checkins = await listActive('checkin');
+  let streak = 0;
+  {
+    const days = new Set(
+      checkins
+        .filter((c) => c.payload.status === 'done')
+        .map((c) => localDayKeyFromIso(c.updatedAt || c.payload.at))
+    );
+    const cursor = new Date();
+    for (;;) {
+      const key = dayKey(cursor);
+      if (!days.has(key)) break;
+      streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+  }
+
+  const search = h('input', {
+    placeholder: '搜索我的计划、提醒或任务…',
+    value: state.query || '',
+    'aria-label': '搜索',
+  });
+  search.addEventListener('input', () => {
+    state.query = search.value;
+    render();
+  });
+
+  const wrap = h('div', { className: 'pad' }, [
+    h('div', { className: 'home-hello', style: 'display:flex;justify-content:space-between;align-items:flex-start;gap:12px' }, [
+      h('div', {}, [
+        h('h1', { text: `欢迎，${name}` }),
+        h('p', { text: `今天也是元气满满的一天 · ${fmtDateNice()}` }),
+        streak > 0 ? h('span', { className: 'streak-pill', text: `连续打卡 ${streak} 天` }) : null,
+      ]),
+      h('div', {
+        className: 'face',
+        style: 'width:40px;height:40px;font-size:1rem;margin:0',
+        text: (name || '?').slice(0, 1),
+      }),
+    ]),
+    h('div', { className: 'home-search' }, [h('span', { html: icons.search, 'aria-hidden': 'true' }), search]),
+  ]);
+
+  appendNodes(
+    wrap,
+    h('div', { className: 'section-head' }, [
+      h('h2', { text: '家庭计划' }),
+      h('button', {
+        type: 'button',
+        text: '查看全部',
+        onClick: () => {
+          state.tab = 'plans';
+          render();
+        },
+      }),
+    ])
+  );
+  if (!plans.length) {
+    appendNodes(wrap, h('p', { className: 'muted', text: '还没有计划，去建一个吧。' }));
+  } else {
+    const rail = h('div', { className: 'plan-rail' });
+    plans.filter((p) => match(p.payload.title)).slice(0, 6).forEach((p, i) => {
+      const prog = milestoneProgress(p.payload.milestones);
+      const pct = prog.total ? Math.round((prog.done / prog.total) * 100) : 0;
+      appendNodes(
+        rail,
+        h(
+          'div',
+          {
+            className: `plan-tile tone-${TILE_TONES[i % TILE_TONES.length]}`,
+            onClick: () => openPlanDetail(p.id),
+          },
+          [
+            h('div', { className: 'plan-tile-top' }, [
+              h('span', { className: 'chip', text: pct ? '进行中' : '新计划' }),
+            ]),
+            h('strong', { text: p.payload.title }),
+            h('div', { className: 'plan-bar' }, [h('i', { style: `width:${pct}%` })]),
+            h('div', { className: 'plan-foot' }, [
+              faceStack(p.payload.executorIds),
+              h('span', { text: `${pct}%` }),
+            ]),
+          ]
+        )
+      );
+    });
+    appendNodes(wrap, rail);
+  }
+
+  appendNodes(
+    wrap,
+    h('div', { className: 'section-head' }, [
+      h('h2', { text: '今日待办快览' }),
+      h('button', {
+        type: 'button',
+        text: '前往待办',
+        onClick: () => {
+          state.tab = 'todo';
+          render();
+        },
+      }),
+    ])
+  );
+  const preview = [...openTodos.slice(0, 4), ...doneRecent.slice(0, 2)];
+  if (!preview.length) {
+    appendNodes(wrap, h('p', { className: 'muted', text: '今天还没有待办。' }));
+  } else {
+    for (const t of preview) {
+      const done = (t.payload.completions || {})[me?.id || 'guest'] === 'done';
+      appendNodes(wrap, todoCard(t, done, me));
+    }
+  }
+  return wrap;
+}
+
+async function renderTodoBody() {
+  state.homeFilter = state.homeFilter || 'open';
+  // reuse today list section by temporarily using today renderer pieces
+  const prev = state.tab;
+  const body = await renderTodayBody();
+  state.tab = prev;
+  return body;
+}
+
+async function renderNotesBody() {
+  const notes = await listActive('note');
+  const q = (state.query || '').trim().toLowerCase();
+  const list = notes
+    .filter((n) => !q || String(n.payload.title || '').toLowerCase().includes(q))
+    .sort((a, b) => (b.payload.pinned === true) - (a.payload.pinned === true));
+  const wrap = h('div', { className: 'pad' }, [
+    h('div', { className: 'section-head' }, [
+      h('h2', { text: '便签' }),
+      h('button', {
+        type: 'button',
+        text: '新建',
+        onClick: () => openCreateForm('note'),
+      }),
+    ]),
+  ]);
+  if (!list.length) {
+    appendNodes(
+      wrap,
+      emptyState('还没有便签', '随手记下家庭琐事，稍后可转成待办。', '写便签', () => openCreateForm('note'))
+    );
+    return wrap;
+  }
+  for (const n of list) {
+    appendNodes(
+      wrap,
+      h('div', { className: 'card pressable', onClick: () => openCreateForm('note') }, [
+        h('h3', { text: `${n.payload.pinned ? '📌 ' : ''}${n.payload.title}` }),
+        h('p', { text: n.payload.body || visibilityLabel(n.payload.visibility) || '便签' }),
+        h('div', { className: 'row', style: 'gap:8px;margin-top:8px' }, [
+          h('button', {
+            type: 'button',
+            className: 'btn secondary',
+            text: '转待办',
+            onClick: async (e) => {
+              e.stopPropagation();
+              try {
+                await api.saveLocalEntity('todo', {
+                  title: n.payload.title,
+                  notes: n.payload.body || '',
+                  dueAt: null,
+                  reminderKind: 'none',
+                  remindAt: null,
+                  assigneeIds: [myId()],
+                  priority: 'medium',
+                  completions: {},
+                  attachmentIds: n.payload.attachmentIds || [],
+                });
+                toast('已转为待办');
+                state.tab = 'todo';
+                render();
+                maybeSync();
+              } catch (err) {
+                toast(err.message);
+              }
+            },
+          }),
+        ]),
+      ])
+    );
+  }
+  return wrap;
+}
+
+async function renderFamilyBody() {
+  const family = api.getFamily();
+  const me = api.getMember();
+  await loadMembers();
+  const members = state.members.filter((m) => !m.disabled);
+  const todos = await listActive('todo');
+  const shared = todos.filter((t) => (t.payload.assigneeIds || []).length > 1 || (t.payload.assigneeIds || [])[0] !== me?.id);
+  const checkins = await listActive('checkin');
+  const notes = await listActive('note');
+  const activity = [];
+  for (const c of checkins.slice(0, 8)) {
+    if (c.payload.status === 'done') {
+      const who = state.members.find((m) => m.id === c.payload.memberId);
+      activity.push(`${who?.displayName || '成员'} 完成了打卡`);
+    }
+  }
+  for (const t of todos.filter((x) => (x.payload.completions || {})[me?.id] === 'done').slice(0, 4)) {
+    activity.push(`完成了「${t.payload.title}」`);
+  }
+  for (const n of notes.slice(0, 3)) {
+    const who = state.members.find((m) => m.id === n.payload.createdBy);
+    activity.push(`${who?.displayName || '家人'} 发布了便签「${n.payload.title}」`);
+  }
+
+  const wrap = h('div', { className: 'pad' }, [
+    h('div', { className: 'section-head' }, [
+      h('h2', { text: family?.name ? `${family.name}的温馨空间` : '家庭' }),
+      ['admin', 'parent'].includes(me?.role)
+        ? h('button', {
+            type: 'button',
+            className: 'invite-chip',
+            text: '邀请成员',
+            onClick: async () => {
+              try {
+                const r = await api.createInvite('adult');
+                const code = r.invite.code;
+                try {
+                  await navigator.clipboard.writeText(code);
+                } catch {
+                  /* ignore */
+                }
+                toast(`邀请码 ${code} 已复制`);
+              } catch (e) {
+                toast(e.message);
+              }
+            },
+          })
+        : null,
+    ]),
+    h('p', { className: 'eyebrow', text: `家庭成员（${members.length}人）` }),
+  ]);
+
+  const grid = h('div', { className: 'member-grid' });
+  for (const m of members) {
+    appendNodes(
+      grid,
+      h('div', { className: 'member-card' }, [
+        h('div', { className: 'face', style: 'margin:0;width:36px;height:36px', text: (m.displayName || '?').slice(0, 1) }),
+        h('strong', { text: m.displayName || '成员' }),
+        h('span', { className: 'role', text: roleLabel(m.role) }),
+      ])
+    );
+  }
+  appendNodes(wrap, grid);
+
+  if (['admin', 'parent'].includes(me?.role)) {
+    appendNodes(
+      wrap,
+      h('button', {
+        className: 'btn secondary',
+        style: 'margin:14px 0',
+        text: '添加儿童账号',
+        onClick: async () => {
+          const displayName = prompt('儿童显示名');
+          if (!displayName) return;
+          const password = prompt('设置密码（至少 6 位）');
+          if (!password) return;
+          try {
+            const r = await api.createChild({ displayName, password });
+            toast(`已创建，登录名 ${r.childLogin.username}`);
+            await loadMembers();
+            render();
+          } catch (e) {
+            toast(e.message);
+          }
+        },
+      })
+    );
+  }
+
+  appendNodes(wrap, h('p', { className: 'eyebrow', text: '共享的家庭任务' }));
+  if (!shared.length) {
+    appendNodes(wrap, h('p', { className: 'muted', text: '暂无多人共享待办。' }));
+  } else {
+    for (const t of shared.slice(0, 8)) {
+      const done = (t.payload.completions || {})[me?.id || 'guest'] === 'done';
+      appendNodes(wrap, todoCard(t, done, me));
+    }
+  }
+
+  appendNodes(wrap, h('p', { className: 'eyebrow', text: '家庭动态简报' }));
+  const act = h('div', { className: 'activity-card' });
+  if (!activity.length) appendNodes(act, h('p', { text: '完成待办或打卡后，这里会出现动态。' }));
+  else for (const line of activity.slice(0, 6)) appendNodes(act, h('p', { text: line }));
+  appendNodes(wrap, act);
+
+  // settings / S2 actions
+  appendNodes(
+    wrap,
+    h('div', { className: 'card', style: 'margin-top:16px' }, [
+      h('h3', { text: '设置与数据' }),
+      h('button', {
+        className: 'settings-row',
+        text: '立即同步',
+        onClick: async () => {
+          try {
+            await api.syncNow();
+            toast('已同步');
+          } catch (e) {
+            toast(e.message);
+          }
+        },
+      }),
+      h('button', {
+        className: 'settings-row',
+        text: '导出家庭数据',
+        onClick: async () => {
+          try {
+            const data = await api.exportFamily();
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `luckytodo-export-${Date.now()}.json`;
+            a.click();
+            toast('已导出');
+          } catch (e) {
+            toast(e.message);
+          }
+        },
+      }),
+      h('button', {
+        className: 'settings-row',
+        text: '处理同步冲突',
+        onClick: async () => {
+          const conflicts = await api.listConflicts();
+          if (!conflicts.length) return toast('当前没有冲突');
+          const c = conflicts[0];
+          const keep = confirm(`「${c.payload?.title || c.id}」与服务器冲突。确定=保留服务器，取消=保留我的并强制上传`);
+          await api.resolveConflict(c.id, keep ? 'server' : 'mine');
+          toast('已处理');
+          maybeSync();
+          render();
+        },
+      }),
+      h('button', {
+        className: 'settings-row',
+        text: '登记推送（占位）',
+        onClick: async () => {
+          try {
+            await api.registerPushToken(`web-${Date.now()}`, 'web');
+            toast('已登记推送 token（S2 接 APNs/FCM）');
+          } catch (e) {
+            toast(e.message);
+          }
+        },
+      }),
+      h('button', {
+        className: 'settings-row',
+        text: '注销账号',
+        onClick: async () => {
+          if (!confirm('确定注销账号？此操作不可恢复。')) return;
+          try {
+            await api.deleteAccount();
+            state.screen = 'cloud-login';
+            toast('账号已注销');
+            render();
+          } catch (e) {
+            toast(e.message);
+          }
+        },
+      }),
+      h('button', {
+        className: 'settings-row',
+        text: '退出登录',
+        onClick: async () => {
+          try {
+            await api.api('POST', '/api/auth/logout');
+          } catch {
+            /* ignore */
+          }
+          api.logout();
+          state.screen = 'cloud-login';
+          render();
+        },
+      }),
+    ])
+  );
+
+  return wrap;
+}
+
 async function renderHome() {
   const titles = {
-    today: '首页',
+    home: '首页',
+    todo: '待办',
     cal: '日历',
     plans: '计划',
+    notes: '便签',
+    family: '家庭',
     insights: '洞察',
-    me: '个人',
   };
+  // legacy tab remap
+  if (state.tab === 'today') state.tab = 'home';
+  if (state.tab === 'me') state.tab = 'family';
   const bodyMap = {
-    today: renderTodayBody,
+    home: renderHomeBody,
+    todo: renderTodoBody,
     cal: renderCalBody,
     plans: renderPlansBody,
+    notes: renderNotesBody,
+    family: renderFamilyBody,
     insights: renderInsightsBody,
-    me: renderMeBody,
   };
-  const body = await bodyMap[state.tab]();
-  const back =
-    state.tab === 'insights'
-      ? h('button', {
-          className: 'icon-btn',
-          'aria-label': '返回个人',
-          html: icons.back,
-          onClick: () => {
-            state.tab = 'me';
-            render();
-          },
-        })
-      : h('span', { className: 'appbar-side' });
-  const top = state.tab === 'today'
-    ? null
-    : h('div', { className: 'top appbar' }, [
-        back,
-        h('h1', { text: titles[state.tab] }),
-        h('span', { className: 'appbar-side' }),
-      ]);
+  const body = await (bodyMap[state.tab] || renderHomeBody)();
+  const top =
+    state.tab === 'home'
+      ? null
+      : h('div', { className: 'top appbar' }, [
+          h('span', { className: 'appbar-side' }),
+          h('h1', { text: titles[state.tab] || 'LuckyTodo' }),
+          h('span', { className: 'appbar-side' }),
+        ]);
 
   return h('div', { className: 'screen' }, [
     top,
     offlineBanner(),
-    h('div', { className: state.tab === 'today' ? 'scroller dash-scroll' : 'scroller' }, [body]),
+    h('div', { className: state.tab === 'home' ? 'scroller dash-scroll' : 'scroller' }, [body]),
     h('button', {
       className: 'fab',
       'aria-label': '添加',
@@ -3107,13 +3783,19 @@ async function renderHome() {
 
 async function render() {
   applyChrome();
-  if ((state.screen === 'home' || state.screen === 'plan-detail') && !api.isLoggedIn()) {
-    state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
+  if ((state.screen === 'home' || state.screen === 'plan-detail') && !api.getToken()) {
+    state.screen = 'cloud-login';
+  }
+  if (state.screen === 'home' && api.getToken() && !api.hasFamily()) {
+    state.screen = 'family-gate';
   }
   root.innerHTML = '';
   root.append(h('div', { id: 'toast', className: 'toast', role: 'status' }));
   let view;
-  if (state.screen === 'local-register') view = renderLocalRegister();
+  if (state.screen === 'cloud-login') view = renderCloudLogin();
+  else if (state.screen === 'cloud-register') view = renderCloudRegister();
+  else if (state.screen === 'family-gate') view = renderFamilyGate();
+  else if (state.screen === 'local-register') view = renderLocalRegister();
   else if (state.screen === 'local-login') view = renderLocalLogin();
   else if (state.screen === 'connect') view = renderConnect();
   else if (state.screen === 'setup') view = renderSetup();
@@ -3122,7 +3804,7 @@ async function render() {
   else if (state.screen === 'plan-detail') view = await renderPlanDetail();
   else view = await renderHome();
   root.append(view);
-  const focusEl = root.querySelector('.form-screen input, .form-screen textarea, .sheet .menu-item');
+  const focusEl = root.querySelector('.form-screen input, .form-screen textarea, .sheet .menu-item, .cloud-card input');
   if (focusEl && focusEl.tagName !== 'BUTTON') setTimeout(() => focusEl.focus(), 50);
   const calPage = root.querySelector('.cal-page');
   if (calPage && typeof calPage._bindCalPull === 'function') {

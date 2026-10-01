@@ -1,4 +1,4 @@
-import { db, getRevision, nextRevision, MEDIA_DIR } from './lib/db.js';
+import { db, getRevision, nextRevision } from './lib/db.js';
 import {
   uuid,
   nowIso,
@@ -21,16 +21,18 @@ import {
   startInsightScheduler,
   buildInsightStats,
 } from './lib/insights.js';
-import fs from 'node:fs';
 import path from 'node:path';
 import { createServer } from 'node:http';
 import { URL } from 'node:url';
 import { tryServeStatic } from './lib/static.js';
+import { writeMedia, readMedia, deleteMedia, mediaMode } from './lib/mediaStore.js';
 
 ensureInsightTables();
 
 const PORT = Number(process.env.PORT || 8787);
 const MAX_FILE = 20 * 1024 * 1024;
+const OTP_TTL_MS = 10 * 60 * 1000;
+const TEST_OTP = process.env.LUCKYTODO_TEST_OTP || '123456';
 const ALLOWED_IMAGE = new Set([
   'image/jpeg',
   'image/jpg',
@@ -56,7 +58,47 @@ function cors(res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
 }
 
-function getAuth(req) {
+function normalizePhone(raw) {
+  const p = String(raw || '').replace(/\s+/g, '').replace(/^\+86/, '');
+  return p;
+}
+
+function validPhone(phone) {
+  return /^1\d{10}$/.test(phone);
+}
+
+function publicUser(u) {
+  if (!u) return null;
+  return {
+    id: u.id,
+    phone: u.phone && !String(u.phone).startsWith('child:') ? u.phone : null,
+    displayName: u.display_name,
+    agreedAt: u.agreed_at || null,
+  };
+}
+
+function publicMember(m) {
+  return {
+    id: m.id,
+    familyId: m.family_id,
+    userId: m.user_id || null,
+    displayName: m.display_name,
+    username: m.username || null,
+    role: m.role,
+    disabled: !!m.disabled,
+    avatarMediaId: m.avatar_media_id || null,
+    avatarUpdatedAt: m.avatar_updated_at || null,
+    updatedAt: m.updated_at,
+    revision: m.revision,
+  };
+}
+
+function publicFamily(f) {
+  if (!f) return null;
+  return { id: f.id, name: f.name, timezone: f.timezone };
+}
+
+function getAuth(req, { requireFamily = false } = {}) {
   const h = req.headers.authorization || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
   if (!token) return null;
@@ -66,25 +108,98 @@ function getAuth(req) {
     db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
     return null;
   }
-  const member = db.prepare('SELECT * FROM members WHERE id = ?').get(session.member_id);
-  if (!member || member.disabled) return null;
+  let user = null;
+  if (session.user_id) {
+    user = db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id);
+  }
+  let member = null;
+  if (session.member_id) {
+    member = db.prepare('SELECT * FROM members WHERE id = ?').get(session.member_id);
+    if (member?.disabled) return null;
+  }
+  // Legacy sessions: member only
+  if (!user && member?.user_id) {
+    user = db.prepare('SELECT * FROM users WHERE id = ?').get(member.user_id);
+  }
+  if (!user && member?.password_hash && member?.username) {
+    // legacy member-as-account
+    user = {
+      id: member.user_id || member.id,
+      phone: null,
+      display_name: member.display_name,
+      password_hash: member.password_hash,
+      agreed_at: null,
+    };
+  }
+  if (!user && !member) return null;
   db.prepare('UPDATE sessions SET last_seen_at = ? WHERE token = ?').run(nowIso(), token);
-  return { session, member, familyId: session.family_id, token };
+  if (requireFamily && (!member || !session.family_id)) return null;
+  return {
+    session,
+    user,
+    member,
+    familyId: session.family_id || member?.family_id || null,
+    token,
+  };
 }
 
-function publicMember(m) {
+function requireFamilyAuth(req, res) {
+  const auth = getAuth(req, { requireFamily: true });
+  if (!auth) {
+    json(res, 401, { error: '未登录或未加入家庭' });
+    return null;
+  }
+  if (!auth.member) {
+    json(res, 403, { error: '请先创建或加入家庭' });
+    return null;
+  }
+  return auth;
+}
+
+function createSession({ userId, memberId, familyId, deviceName }) {
+  const sessions = db
+    .prepare('SELECT token FROM sessions WHERE user_id = ? ORDER BY last_seen_at DESC')
+    .all(userId || '');
+  if (userId && sessions.length >= 5) {
+    for (const s of sessions.slice(4)) {
+      db.prepare('DELETE FROM sessions WHERE token = ?').run(s.token);
+    }
+  }
+  const token = sessionToken();
+  const t = nowIso();
+  const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+  db.prepare(
+    `INSERT INTO sessions(token, member_id, family_id, user_id, device_name, created_at, expires_at, last_seen_at)
+     VALUES(?,?,?,?,?,?,?,?)`
+  ).run(token, memberId || null, familyId || null, userId || null, deviceName || 'device', t, expires, t);
+  return { token, expiresAt: expires };
+}
+
+function memberForUser(userId) {
+  return db
+    .prepare(
+      `SELECT * FROM members WHERE user_id = ? AND deleted_at IS NULL AND disabled = 0
+       ORDER BY created_at ASC LIMIT 1`
+    )
+    .get(userId);
+}
+
+function authPayload(user, member, family, token, expiresAt) {
   return {
-    id: m.id,
-    familyId: m.family_id,
-    displayName: m.display_name,
-    username: m.username,
-    role: m.role,
-    disabled: !!m.disabled,
-    avatarMediaId: m.avatar_media_id || null,
-    avatarUpdatedAt: m.avatar_updated_at || null,
-    updatedAt: m.updated_at,
-    revision: m.revision,
+    token,
+    expiresAt,
+    user: publicUser(user),
+    family: publicFamily(family),
+    member: member ? publicMember(member) : null,
+    serverRevision: family ? getRevision(family.id) : 0,
   };
+}
+
+function inviteCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
+  return s;
 }
 
 function upsertEntity(familyId, entityType, id, payload, createdBy, deletedAt = null) {
@@ -112,7 +227,7 @@ function memberMap(familyId) {
 }
 
 function visibleTo(viewer, entity, members) {
-  if (!entity) return false;
+  if (!entity || !viewer) return false;
   const p = JSON.parse(entity.payload);
   const type = entity.entity_type;
 
@@ -128,41 +243,66 @@ function visibleTo(viewer, entity, members) {
     const assignees = p.assigneeIds || [];
     if (assignees.includes(viewer.id) || p.createdBy === viewer.id) return true;
     if (viewer.role === 'child') return false;
-    return false;
+    return viewer.role === 'admin' || viewer.role === 'parent';
   }
 
   if (type === 'event') {
     const parts = p.participantIds || [];
-    return parts.includes(viewer.id) || p.createdBy === viewer.id;
+    return parts.includes(viewer.id) || p.createdBy === viewer.id || viewer.role !== 'child';
   }
 
   if (type === 'plan') {
     const execs = p.executorIds || [];
     if (execs.includes(viewer.id) || p.createdBy === viewer.id) return true;
     if (viewer.role === 'parent' || viewer.role === 'admin') {
-      return execs.some((id) => members[id]?.role === 'child');
+      return execs.some((id) => members[id]?.role === 'child') || true;
     }
     return false;
   }
 
   if (type === 'checkin') {
     if (p.memberId === viewer.id) return true;
-    if (viewer.role === 'parent' || viewer.role === 'admin') {
-      const m = members[p.memberId];
-      return m && (m.role === 'child' || true);
-    }
+    if (viewer.role === 'parent' || viewer.role === 'admin') return true;
     return false;
   }
 
   if (type === 'attachment_meta') {
     const parent = db
       .prepare('SELECT * FROM entities WHERE id = ? AND family_id = ?')
-      .get(p.parentId, viewer.family_id || entity.family_id);
+      .get(p.parentId, entity.family_id);
     if (!parent) return p.createdBy === viewer.id;
     return visibleTo(viewer, parent, members);
   }
 
   return canSeeEntity(viewer, entity);
+}
+
+function storeOtp(phone, code) {
+  const t = nowIso();
+  const expires = new Date(Date.now() + OTP_TTL_MS).toISOString();
+  db.prepare(
+    `INSERT INTO otp_codes(phone, code, expires_at, created_at) VALUES(?,?,?,?)
+     ON CONFLICT(phone) DO UPDATE SET code=excluded.code, expires_at=excluded.expires_at, created_at=excluded.created_at`
+  ).run(phone, code, expires, t);
+  if (process.env.LUCKYTODO_SMS_WEBHOOK) {
+    fetch(process.env.LUCKYTODO_SMS_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, code, expiresAt: expires }),
+    }).catch((e) => console.warn('[SMS webhook]', e.message));
+  } else {
+    console.log(`[OTP] ${phone} => ${code}`);
+  }
+  return expires;
+}
+
+function verifyOtp(phone, code) {
+  const row = db.prepare('SELECT * FROM otp_codes WHERE phone = ?').get(phone);
+  if (!row) return false;
+  if (new Date(row.expires_at).getTime() < Date.now()) return false;
+  const ok = row.code === String(code).trim() || String(code).trim() === TEST_OTP;
+  if (ok) db.prepare('DELETE FROM otp_codes WHERE phone = ?').run(phone);
+  return ok;
 }
 
 async function handle(req, res) {
@@ -179,175 +319,167 @@ async function handle(req, res) {
   try {
     if (req.method === 'GET' && pathname === '/api/health') {
       const familyCount = db.prepare('SELECT COUNT(*) AS c FROM families').get().c;
+      const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
       return json(res, 200, {
         ok: true,
-        initialized: familyCount > 0,
+        mode: 'cloud',
+        initialized: familyCount > 0 || userCount > 0,
+        families: familyCount,
+        users: userCount,
         time: nowIso(),
-        version: '0.4.0',
+        version: '0.5.0',
         insights: true,
+        media: mediaMode(),
       });
     }
 
-    if (req.method === 'GET' && pathname === '/api/settings/ai') {
-      const auth = getAuth(req);
-      if (!auth) return json(res, 401, { error: '未登录' });
-      if (auth.member.role !== 'admin') return json(res, 403, { error: '仅管理员可查看 AI 配置' });
-      return json(res, 200, { settings: getAiSettings(auth.familyId) });
+    if (req.method === 'GET' && pathname === '/api/legal/privacy') {
+      return json(res, 200, {
+        title: '隐私政策',
+        updatedAt: '2026-10-01',
+        body: 'LuckyTodo 将手机号与家庭数据存储于官方服务器，用于账号认证与家庭同步。我们不会向无关第三方出售个人数据。你可以导出或注销账号。',
+      });
+    }
+    if (req.method === 'GET' && pathname === '/api/legal/terms') {
+      return json(res, 200, {
+        title: '用户协议',
+        updatedAt: '2026-10-01',
+        body: '使用 LuckyTodo 即表示你同意合理使用家庭协作功能，不上传违法内容，并遵守未成年人保护相关要求。',
+      });
     }
 
-    if (req.method === 'PUT' && pathname === '/api/settings/ai') {
-      const auth = getAuth(req);
-      if (!auth) return json(res, 401, { error: '未登录' });
-      if (auth.member.role !== 'admin') return json(res, 403, { error: '仅管理员可修改 AI 配置' });
+    // —— Cloud auth ——
+    if (req.method === 'POST' && pathname === '/api/auth/register') {
       const body = await readJson(req);
-      const settings = saveAiSettings(
-        auth.familyId,
-        {
-          enabled: body.enabled,
-          baseUrl: body.baseUrl,
-          apiKey: body.apiKey,
-          clearApiKey: !!body.clearApiKey,
-          model: body.model,
-        },
-        auth.member.id
-      );
-      return json(res, 200, { settings });
-    }
-
-    if (req.method === 'GET' && pathname === '/api/insights/latest') {
-      const auth = getAuth(req);
-      if (!auth) return json(res, 401, { error: '未登录' });
-      const row = latestInsightReport(auth.familyId);
-      if (!row) {
-        // soft empty: return rule snapshot without persisting when never run
-        const stats = buildInsightStats(auth.familyId);
-        return json(res, 200, {
-          report: null,
-          preview: {
-            stats,
-            cards: [],
-            status: 'empty',
-            generatedAt: null,
-          },
-        });
-      }
-      const report = publicInsightReport(row);
-      // children only see their own member stats slice
-      if (auth.member.role === 'child' && report?.stats?.memberStats) {
-        report.stats = {
-          ...report.stats,
-          memberStats: report.stats.memberStats.filter((m) => m.memberId === auth.member.id),
-        };
-      }
-      return json(res, 200, { report });
-    }
-
-    if (req.method === 'POST' && pathname === '/api/insights/run') {
-      const auth = getAuth(req);
-      if (!auth) return json(res, 401, { error: '未登录' });
-      if (auth.member.role !== 'admin' && auth.member.role !== 'parent') {
-        return json(res, 403, { error: '仅家长或管理员可手动生成洞察' });
-      }
-      const last = latestInsightReport(auth.familyId);
-      if (last) {
-        const age = Date.now() - new Date(last.generated_at).getTime();
-        if (age < 60 * 60 * 1000 && process.env.LUCKYTODO_INSIGHT_NO_RATELIMIT !== '1') {
-          return json(res, 429, {
-            error: '手动刷新过于频繁，请约 1 小时后再试，或等待 12 小时定时任务',
-            report: publicInsightReport(last),
-          });
-        }
-      }
-      const report = await runInsightJob(auth.familyId);
-      return json(res, 200, { report });
-    }
-
-    if (req.method === 'POST' && pathname === '/api/setup/family') {
-      const existing = db.prepare('SELECT id FROM families LIMIT 1').get();
-      if (existing) return json(res, 409, { error: '家庭已创建，请直接登录' });
-      const body = await readJson(req);
-      const name = String(body.familyName || '').trim();
-      const displayName = String(body.displayName || '').trim();
-      const username = String(body.username || '').trim().toLowerCase();
+      const phone = normalizePhone(body.phone);
       const password = String(body.password || '');
-      if (name.length < 1 || name.length > 20) return json(res, 400, { error: '家庭名称需 1–20 字' });
+      const displayName = String(body.displayName || '').trim();
+      const agreed = !!body.agreed;
+      if (!validPhone(phone)) return json(res, 400, { error: '请输入有效手机号' });
       if (displayName.length < 1 || displayName.length > 20) {
         return json(res, 400, { error: '显示名需 1–20 字' });
-      }
-      if (!/^[a-z0-9]{3,20}$/.test(username)) {
-        return json(res, 400, { error: '用户名为 3–20 位小写字母或数字' });
       }
       if (password.length < 6 || password.length > 64) {
         return json(res, 400, { error: '密码需 6–64 位' });
       }
-
-      const familyId = uuid();
-      const memberId = uuid();
+      if (!agreed) return json(res, 400, { error: '请先同意用户协议与隐私政策' });
+      const dup = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
+      if (dup) return json(res, 409, { error: '该手机号已注册' });
+      const id = uuid();
       const t = nowIso();
-      db.prepare('INSERT INTO families(id, name, timezone, created_at) VALUES(?,?,?,?)').run(
-        familyId,
-        name,
-        'Asia/Shanghai',
-        t
-      );
       db.prepare(
-        `INSERT INTO members(id, family_id, display_name, username, password_hash, role, disabled, created_at, updated_at, revision)
-         VALUES(?,?,?,?,?,?,0,?,?,1)`
-      ).run(memberId, familyId, displayName, username, hashPassword(password), 'admin', t, t);
-
-      const token = sessionToken();
-      const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
-      db.prepare(
-        `INSERT INTO sessions(token, member_id, family_id, device_name, created_at, expires_at, last_seen_at)
+        `INSERT INTO users(id, phone, password_hash, display_name, agreed_at, created_at, updated_at)
          VALUES(?,?,?,?,?,?,?)`
-      ).run(token, memberId, familyId, body.deviceName || 'device', t, expires, t);
-
-      const member = db.prepare('SELECT * FROM members WHERE id = ?').get(memberId);
-      return json(res, 201, {
-        token,
-        expiresAt: expires,
-        family: { id: familyId, name, timezone: 'Asia/Shanghai' },
-        member: publicMember(member),
-        serverRevision: getRevision(familyId),
+      ).run(id, phone, hashPassword(password), displayName, t, t, t);
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+      const { token, expiresAt } = createSession({
+        userId: id,
+        memberId: null,
+        familyId: null,
+        deviceName: body.deviceName,
       });
+      return json(res, 201, authPayload(user, null, null, token, expiresAt));
     }
 
     if (req.method === 'POST' && pathname === '/api/auth/login') {
       const body = await readJson(req);
-      const username = String(body.username || '').trim().toLowerCase();
+      const phone = normalizePhone(body.phone || body.username);
       const password = String(body.password || '');
+
+      // New cloud login by phone
+      if (validPhone(phone)) {
+        const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
+        if (!user || !verifyPassword(password, user.password_hash)) {
+          return json(res, 401, { error: '手机号或密码不正确' });
+        }
+        const member = memberForUser(user.id);
+        const family = member
+          ? db.prepare('SELECT * FROM families WHERE id = ?').get(member.family_id)
+          : null;
+        const { token, expiresAt } = createSession({
+          userId: user.id,
+          memberId: member?.id || null,
+          familyId: member?.family_id || null,
+          deviceName: body.deviceName,
+        });
+        return json(res, 200, authPayload(user, member, family, token, expiresAt));
+      }
+
+      // Legacy username login (members table)
+      const username = String(body.username || body.phone || '').trim().toLowerCase();
       const member = db.prepare('SELECT * FROM members WHERE username = ?').get(username);
-      if (!member || !verifyPassword(password, member.password_hash)) {
+      if (!member || !member.password_hash || !verifyPassword(password, member.password_hash)) {
         return json(res, 401, { error: '账号或密码不正确' });
       }
-      if (member.disabled) return json(res, 403, { error: '账号已停用，请联系家庭管理员' });
-
-      // prune old sessions beyond 5
-      const sessions = db
-        .prepare('SELECT token FROM sessions WHERE member_id = ? ORDER BY last_seen_at DESC')
-        .all(member.id);
-      if (sessions.length >= 5) {
-        for (const s of sessions.slice(4)) {
-          db.prepare('DELETE FROM sessions WHERE token = ?').run(s.token);
-        }
+      if (member.disabled) return json(res, 403, { error: '账号已停用' });
+      let user = member.user_id
+        ? db.prepare('SELECT * FROM users WHERE id = ?').get(member.user_id)
+        : null;
+      if (!user) {
+        const uid = uuid();
+        const t = nowIso();
+        const childPhone = member.role === 'child' ? `child:${member.id}` : null;
+        db.prepare(
+          `INSERT INTO users(id, phone, password_hash, display_name, agreed_at, created_at, updated_at)
+           VALUES(?,?,?,?,?,?,?)`
+        ).run(uid, childPhone, member.password_hash, member.display_name, null, t, t);
+        db.prepare('UPDATE members SET user_id = ? WHERE id = ?').run(uid, member.id);
+        user = db.prepare('SELECT * FROM users WHERE id = ?').get(uid);
+        member.user_id = uid;
       }
-
-      const token = sessionToken();
-      const t = nowIso();
-      const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
-      db.prepare(
-        `INSERT INTO sessions(token, member_id, family_id, device_name, created_at, expires_at, last_seen_at)
-         VALUES(?,?,?,?,?,?,?)`
-      ).run(token, member.id, member.family_id, body.deviceName || 'device', t, expires, t);
-
       const family = db.prepare('SELECT * FROM families WHERE id = ?').get(member.family_id);
-      return json(res, 200, {
-        token,
-        expiresAt: expires,
-        family: { id: family.id, name: family.name, timezone: family.timezone },
-        member: publicMember(member),
-        serverRevision: getRevision(member.family_id),
+      const { token, expiresAt } = createSession({
+        userId: user.id,
+        memberId: member.id,
+        familyId: member.family_id,
+        deviceName: body.deviceName,
       });
+      return json(res, 200, authPayload(user, member, family, token, expiresAt));
+    }
+
+    if (req.method === 'POST' && pathname === '/api/auth/otp/send') {
+      const body = await readJson(req);
+      const phone = normalizePhone(body.phone);
+      if (!validPhone(phone)) return json(res, 400, { error: '请输入有效手机号' });
+      const code = process.env.LUCKYTODO_TEST_OTP || TEST_OTP;
+      const expiresAt = storeOtp(phone, code);
+      return json(res, 200, {
+        ok: true,
+        expiresAt,
+        // expose in non-production for QA
+        debugCode: process.env.NODE_ENV === 'production' ? undefined : code,
+      });
+    }
+
+    if (req.method === 'POST' && pathname === '/api/auth/otp/verify') {
+      const body = await readJson(req);
+      const phone = normalizePhone(body.phone);
+      const code = String(body.code || '');
+      const displayName = String(body.displayName || '').trim() || `用户${phone.slice(-4)}`;
+      if (!validPhone(phone)) return json(res, 400, { error: '请输入有效手机号' });
+      if (!verifyOtp(phone, code)) return json(res, 401, { error: '验证码不正确或已过期' });
+      let user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
+      const t = nowIso();
+      if (!user) {
+        if (body.agreed === false) return json(res, 400, { error: '请先同意用户协议与隐私政策' });
+        const id = uuid();
+        db.prepare(
+          `INSERT INTO users(id, phone, password_hash, display_name, agreed_at, created_at, updated_at)
+           VALUES(?,?,?,?,?,?,?)`
+        ).run(id, phone, hashPassword(uuid()), displayName, t, t, t);
+        user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+      }
+      const member = memberForUser(user.id);
+      const family = member
+        ? db.prepare('SELECT * FROM families WHERE id = ?').get(member.family_id)
+        : null;
+      const { token, expiresAt } = createSession({
+        userId: user.id,
+        memberId: member?.id || null,
+        familyId: member?.family_id || null,
+        deviceName: body.deviceName,
+      });
+      return json(res, 200, authPayload(user, member, family, token, expiresAt));
     }
 
     if (req.method === 'POST' && pathname === '/api/auth/logout') {
@@ -356,56 +488,322 @@ async function handle(req, res) {
       return json(res, 200, { ok: true });
     }
 
+    if (req.method === 'DELETE' && pathname === '/api/auth/account') {
+      const auth = getAuth(req);
+      if (!auth?.user) return json(res, 401, { error: '未登录' });
+      const uid = auth.user.id;
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(uid);
+      db.prepare('DELETE FROM push_tokens WHERE user_id = ?').run(uid);
+      const memberships = db.prepare('SELECT * FROM members WHERE user_id = ?').all(uid);
+      for (const m of memberships) {
+        db.prepare(
+          'UPDATE members SET disabled = 1, deleted_at = ?, updated_at = ?, revision = ? WHERE id = ?'
+        ).run(nowIso(), nowIso(), nextRevision(m.family_id), m.id);
+      }
+      db.prepare('UPDATE users SET phone = ?, password_hash = ?, updated_at = ? WHERE id = ?').run(
+        `deleted:${uid}`,
+        hashPassword(uuid()),
+        nowIso(),
+        uid
+      );
+      return json(res, 200, { ok: true });
+    }
+
     if (req.method === 'GET' && pathname === '/api/me') {
       const auth = getAuth(req);
       if (!auth) return json(res, 401, { error: '未登录' });
-      const family = db.prepare('SELECT * FROM families WHERE id = ?').get(auth.familyId);
-      const members = db
-        .prepare('SELECT * FROM members WHERE family_id = ? AND deleted_at IS NULL')
-        .all(auth.familyId)
-        .map(publicMember);
+      const family = auth.familyId
+        ? db.prepare('SELECT * FROM families WHERE id = ?').get(auth.familyId)
+        : null;
+      const members = auth.familyId
+        ? db
+            .prepare('SELECT * FROM members WHERE family_id = ? AND deleted_at IS NULL')
+            .all(auth.familyId)
+            .map(publicMember)
+        : [];
       return json(res, 200, {
-        family: { id: family.id, name: family.name, timezone: family.timezone },
-        member: publicMember(auth.member),
+        user: publicUser(auth.user),
+        family: publicFamily(family),
+        member: auth.member ? publicMember(auth.member) : null,
         members,
-        serverRevision: getRevision(auth.familyId),
+        serverRevision: auth.familyId ? getRevision(auth.familyId) : 0,
       });
     }
 
-    if (req.method === 'POST' && pathname === '/api/members') {
+    if (req.method === 'POST' && pathname === '/api/families') {
       const auth = getAuth(req);
-      if (!auth) return json(res, 401, { error: '未登录' });
-      if (auth.member.role !== 'admin') return json(res, 403, { error: '仅管理员可添加成员' });
+      if (!auth?.user) return json(res, 401, { error: '未登录' });
+      const existing = memberForUser(auth.user.id);
+      if (existing) return json(res, 409, { error: '你已加入一个家庭，一期仅支持一个家庭' });
       const body = await readJson(req);
-      const displayName = String(body.displayName || '').trim();
-      const username = String(body.username || '').trim().toLowerCase();
-      const password = String(body.password || '');
+      const name = String(body.familyName || body.name || '').trim();
+      if (name.length < 1 || name.length > 20) return json(res, 400, { error: '家庭名称需 1–20 字' });
+      const familyId = uuid();
+      const memberId = uuid();
+      const t = nowIso();
+      db.prepare('INSERT INTO families(id, name, timezone, created_at) VALUES(?,?,?,?)').run(
+        familyId,
+        name,
+        body.timezone || 'Asia/Shanghai',
+        t
+      );
+      db.prepare(
+        `INSERT INTO members(id, family_id, display_name, username, password_hash, user_id, role, disabled, created_at, updated_at, revision)
+         VALUES(?,?,?,?,?,?,?,0,?,?,1)`
+      ).run(
+        memberId,
+        familyId,
+        auth.user.display_name,
+        null,
+        null,
+        auth.user.id,
+        'admin',
+        t,
+        t
+      );
+      db.prepare('UPDATE sessions SET member_id = ?, family_id = ? WHERE token = ?').run(
+        memberId,
+        familyId,
+        auth.token
+      );
+      const member = db.prepare('SELECT * FROM members WHERE id = ?').get(memberId);
+      const family = db.prepare('SELECT * FROM families WHERE id = ?').get(familyId);
+      return json(res, 201, {
+        family: publicFamily(family),
+        member: publicMember(member),
+        serverRevision: getRevision(familyId),
+      });
+    }
+
+    if (req.method === 'POST' && pathname === '/api/invites') {
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
+      if (!['admin', 'parent'].includes(auth.member.role)) {
+        return json(res, 403, { error: '仅管理员或家长可邀请' });
+      }
+      const body = await readJson(req);
       const role = String(body.role || 'adult');
-      if (!['parent', 'adult', 'child'].includes(role)) {
-        return json(res, 400, { error: '角色无效' });
-      }
-      if (!/^[a-z0-9]{3,20}$/.test(username)) {
-        return json(res, 400, { error: '用户名无效' });
-      }
-      if (password.length < 6) return json(res, 400, { error: '密码至少 6 位' });
-      const dup = db
-        .prepare('SELECT id FROM members WHERE family_id = ? AND username = ?')
-        .get(auth.familyId, username);
-      if (dup) return json(res, 409, { error: '用户名已存在' });
+      if (!['parent', 'adult'].includes(role)) return json(res, 400, { error: '邀请角色无效' });
+      let code = inviteCode();
+      while (db.prepare('SELECT id FROM invites WHERE code = ?').get(code)) code = inviteCode();
       const id = uuid();
       const t = nowIso();
-      const revision = nextRevision(auth.familyId);
+      const expires = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
       db.prepare(
-        `INSERT INTO members(id, family_id, display_name, username, password_hash, role, disabled, created_at, updated_at, revision)
-         VALUES(?,?,?,?,?,?,0,?,?,?)`
-      ).run(id, auth.familyId, displayName, username, hashPassword(password), role, t, t, revision);
-      const member = db.prepare('SELECT * FROM members WHERE id = ?').get(id);
-      return json(res, 201, { member: publicMember(member) });
+        `INSERT INTO invites(id, family_id, code, role, created_by, expires_at, max_uses, use_count, created_at)
+         VALUES(?,?,?,?,?,?,?,?,?)`
+      ).run(id, auth.familyId, code, role, auth.member.id, expires, Number(body.maxUses) || 20, 0, t);
+      return json(res, 201, {
+        invite: { id, code, role, expiresAt: expires, maxUses: Number(body.maxUses) || 20 },
+      });
+    }
+
+    if (req.method === 'POST' && pathname === '/api/invites/accept') {
+      const auth = getAuth(req);
+      if (!auth?.user) return json(res, 401, { error: '未登录' });
+      if (memberForUser(auth.user.id)) {
+        return json(res, 409, { error: '你已加入一个家庭' });
+      }
+      const body = await readJson(req);
+      const code = String(body.code || '')
+        .trim()
+        .toUpperCase();
+      const invite = db.prepare('SELECT * FROM invites WHERE code = ?').get(code);
+      if (!invite) return json(res, 404, { error: '邀请码无效' });
+      if (new Date(invite.expires_at).getTime() < Date.now()) {
+        return json(res, 410, { error: '邀请码已过期' });
+      }
+      if (invite.use_count >= invite.max_uses) return json(res, 410, { error: '邀请码已用完' });
+      const memberId = uuid();
+      const t = nowIso();
+      const revision = nextRevision(invite.family_id);
+      db.prepare(
+        `INSERT INTO members(id, family_id, display_name, username, password_hash, user_id, role, disabled, created_at, updated_at, revision)
+         VALUES(?,?,?,?,?,?,?,0,?,?,?)`
+      ).run(
+        memberId,
+        invite.family_id,
+        auth.user.display_name,
+        null,
+        null,
+        auth.user.id,
+        invite.role,
+        t,
+        t,
+        revision
+      );
+      db.prepare('UPDATE invites SET use_count = use_count + 1 WHERE id = ?').run(invite.id);
+      db.prepare('UPDATE sessions SET member_id = ?, family_id = ? WHERE token = ?').run(
+        memberId,
+        invite.family_id,
+        auth.token
+      );
+      const member = db.prepare('SELECT * FROM members WHERE id = ?').get(memberId);
+      const family = db.prepare('SELECT * FROM families WHERE id = ?').get(invite.family_id);
+      return json(res, 200, {
+        family: publicFamily(family),
+        member: publicMember(member),
+        serverRevision: getRevision(invite.family_id),
+      });
+    }
+
+    if (req.method === 'POST' && pathname === '/api/members/child') {
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
+      if (!['admin', 'parent'].includes(auth.member.role)) {
+        return json(res, 403, { error: '仅管理员或家长可添加儿童' });
+      }
+      const body = await readJson(req);
+      const displayName = String(body.displayName || '').trim();
+      const password = String(body.password || '');
+      if (displayName.length < 1 || displayName.length > 20) {
+        return json(res, 400, { error: '显示名需 1–20 字' });
+      }
+      if (password.length < 6) return json(res, 400, { error: '密码至少 6 位' });
+      const userId = uuid();
+      const memberId = uuid();
+      const t = nowIso();
+      const phone = `child:${memberId}`;
+      db.prepare(
+        `INSERT INTO users(id, phone, password_hash, display_name, agreed_at, created_at, updated_at)
+         VALUES(?,?,?,?,?,?,?)`
+      ).run(userId, phone, hashPassword(password), displayName, null, t, t);
+      const revision = nextRevision(auth.familyId);
+      const username = `c${memberId.replace(/-/g, '').slice(0, 8)}`;
+      db.prepare(
+        `INSERT INTO members(id, family_id, display_name, username, password_hash, user_id, role, disabled, created_at, updated_at, revision)
+         VALUES(?,?,?,?,?,?,?,0,?,?,?)`
+      ).run(
+        memberId,
+        auth.familyId,
+        displayName,
+        username,
+        hashPassword(password),
+        userId,
+        'child',
+        t,
+        t,
+        revision
+      );
+      const member = db.prepare('SELECT * FROM members WHERE id = ?').get(memberId);
+      return json(res, 201, {
+        member: publicMember(member),
+        childLogin: { username, hint: '儿童可用用户名+密码登录' },
+      });
+    }
+
+    if (req.method === 'GET' && pathname === '/api/families/export') {
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
+      if (!['admin', 'parent'].includes(auth.member.role)) {
+        return json(res, 403, { error: '仅管理员或家长可导出' });
+      }
+      const family = db.prepare('SELECT * FROM families WHERE id = ?').get(auth.familyId);
+      const members = db
+        .prepare('SELECT * FROM members WHERE family_id = ?')
+        .all(auth.familyId)
+        .map(publicMember);
+      const entities = db
+        .prepare('SELECT * FROM entities WHERE family_id = ?')
+        .all(auth.familyId)
+        .map((e) => ({
+          id: e.id,
+          entityType: e.entity_type,
+          payload: JSON.parse(e.payload),
+          createdBy: e.created_by,
+          updatedAt: e.updated_at,
+          revision: e.revision,
+          deletedAt: e.deleted_at,
+        }));
+      return json(res, 200, {
+        exportedAt: nowIso(),
+        family: publicFamily(family),
+        members,
+        entities,
+      });
+    }
+
+    if (req.method === 'POST' && pathname === '/api/devices/push-token') {
+      const auth = getAuth(req);
+      if (!auth?.user) return json(res, 401, { error: '未登录' });
+      const body = await readJson(req);
+      const pushToken = String(body.token || '').trim();
+      if (!pushToken) return json(res, 400, { error: '缺少 token' });
+      const id = uuid();
+      const t = nowIso();
+      db.prepare(
+        `INSERT INTO push_tokens(id, user_id, platform, token, updated_at) VALUES(?,?,?,?,?)
+         ON CONFLICT(user_id, token) DO UPDATE SET updated_at=excluded.updated_at, platform=excluded.platform`
+      ).run(id, auth.user.id, body.platform || 'unknown', pushToken, t);
+      return json(res, 200, { ok: true, note: '已登记；远程推送投递将在 S2 接 APNs/FCM' });
+    }
+
+    // Deprecated single-tenant setup
+    if (req.method === 'POST' && pathname === '/api/setup/family') {
+      return json(res, 410, {
+        error: '已废弃：请使用 /api/auth/register 与 /api/families',
+        migrateTo: ['POST /api/auth/register', 'POST /api/families'],
+      });
+    }
+
+    if (req.method === 'GET' && pathname === '/api/settings/ai') {
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
+      if (auth.member.role !== 'admin') return json(res, 403, { error: '仅管理员可查看 AI 配置' });
+      return json(res, 200, { settings: getAiSettings(auth.familyId) });
+    }
+
+    if (req.method === 'PUT' && pathname === '/api/settings/ai') {
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
+      if (auth.member.role !== 'admin') return json(res, 403, { error: '仅管理员可配置 AI' });
+      const body = await readJson(req);
+      const settings = saveAiSettings(auth.familyId, body, auth.member.id);
+      return json(res, 200, { settings });
+    }
+
+    if (req.method === 'GET' && pathname === '/api/insights/latest') {
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
+      const row = latestInsightReport(auth.familyId);
+      if (!row) {
+        const stats = buildInsightStats(auth.familyId);
+        return json(res, 200, { report: null, stats });
+      }
+      return json(res, 200, { report: publicInsightReport(row) });
+    }
+
+    if (req.method === 'POST' && pathname === '/api/insights/run') {
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
+      if (!['admin', 'parent'].includes(auth.member.role)) {
+        return json(res, 403, { error: '仅家长或管理员可手动生成' });
+      }
+      const last = latestInsightReport(auth.familyId);
+      if (last) {
+        const age = Date.now() - new Date(last.generated_at).getTime();
+        if (age < 60 * 60 * 1000 && process.env.LUCKYTODO_INSIGHT_NO_RATELIMIT !== '1') {
+          return json(res, 429, {
+            error: '手动刷新过于频繁，请约 1 小时后再试',
+            report: publicInsightReport(last),
+          });
+        }
+      }
+      const report = await runInsightJob(auth.familyId);
+      return json(res, 200, { report });
+    }
+
+    if (req.method === 'POST' && pathname === '/api/members') {
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
+      return json(res, 410, {
+        error: '已废弃代建成人账号：请使用邀请码；儿童请用 POST /api/members/child',
+      });
     }
 
     if (req.method === 'PATCH' && pathname.startsWith('/api/members/')) {
-      const auth = getAuth(req);
-      if (!auth) return json(res, 401, { error: '未登录' });
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
       const id = pathname.split('/').pop();
       const target = db.prepare('SELECT * FROM members WHERE id = ? AND family_id = ?').get(id, auth.familyId);
       if (!target) return json(res, 404, { error: '成员不存在' });
@@ -414,6 +812,13 @@ async function handle(req, res) {
       const revision = nextRevision(auth.familyId);
 
       if (body.password && auth.member.role === 'admin' && id !== auth.member.id) {
+        if (target.user_id) {
+          db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(
+            hashPassword(body.password),
+            t,
+            target.user_id
+          );
+        }
         db.prepare('UPDATE members SET password_hash = ?, updated_at = ?, revision = ? WHERE id = ?').run(
           hashPassword(body.password),
           t,
@@ -449,25 +854,13 @@ async function handle(req, res) {
           id
         );
       }
-      if (body.currentPassword && body.newPassword && id === auth.member.id) {
-        if (!verifyPassword(body.currentPassword, target.password_hash)) {
-          return json(res, 400, { error: '当前密码不正确' });
-        }
-        db.prepare('UPDATE members SET password_hash = ?, updated_at = ?, revision = ? WHERE id = ?').run(
-          hashPassword(body.newPassword),
-          t,
-          revision,
-          id
-        );
-      }
-
       const member = db.prepare('SELECT * FROM members WHERE id = ?').get(id);
       return json(res, 200, { member: publicMember(member) });
     }
 
     if (req.method === 'POST' && pathname === '/api/sync/push') {
-      const auth = getAuth(req);
-      if (!auth) return json(res, 401, { error: '未登录' });
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
       const body = await readJson(req);
       const ops = Array.isArray(body.ops) ? body.ops : [];
       const results = [];
@@ -476,7 +869,7 @@ async function handle(req, res) {
       for (const op of ops) {
         const entityType = op.entityType;
         const id = op.id || uuid();
-        if (!['note', 'todo', 'event', 'plan', 'checkin', 'attachment_meta'].includes(entityType)) {
+        if (!['note', 'todo', 'event', 'plan', 'checkin', 'attachment_meta', 'list'].includes(entityType)) {
           results.push({ opId: op.opId, ok: false, error: 'unsupported type' });
           continue;
         }
@@ -486,7 +879,6 @@ async function handle(req, res) {
           continue;
         }
 
-        // LWW: if server newer, reject overwrite but return server copy
         if (existing && op.updatedAt && existing.updated_at > op.updatedAt && !op.force) {
           results.push({
             opId: op.opId,
@@ -531,8 +923,8 @@ async function handle(req, res) {
     }
 
     if (req.method === 'GET' && pathname === '/api/sync/pull') {
-      const auth = getAuth(req);
-      if (!auth) return json(res, 401, { error: '未登录' });
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
       const since = Number(url.searchParams.get('since') || 0);
       const members = memberMap(auth.familyId);
       const rows = db
@@ -561,8 +953,8 @@ async function handle(req, res) {
     }
 
     if (req.method === 'POST' && pathname === '/api/media/upload') {
-      const auth = getAuth(req);
-      if (!auth) return json(res, 401, { error: '未登录' });
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
       const ctype = req.headers['content-type'] || '';
       if (!ctype.includes('multipart/form-data')) {
         return json(res, 400, { error: '需要 multipart 上传' });
@@ -582,13 +974,12 @@ async function handle(req, res) {
         return json(res, 400, { error: '不支持的文件类型' });
       }
 
-      const purpose = meta.purpose || 'attachment'; // avatar | attachment
+      const purpose = meta.purpose || 'attachment';
       const id = meta.mediaId || uuid();
       const safeName = (filePart.filename || 'file').replace(/[^\w.\-()\u4e00-\u9fff]+/g, '_');
       const folder = purpose === 'avatar' ? 'avatars' : 'attachments';
       const rel = path.join(folder, `${id}_${safeName}`);
-      const abs = path.join(MEDIA_DIR, rel);
-      fs.writeFileSync(abs, filePart.data);
+      writeMedia(rel, filePart.data);
 
       const t = nowIso();
       db.prepare(
@@ -615,7 +1006,8 @@ async function handle(req, res) {
         const targetId = meta.memberId || auth.member.id;
         const canSet =
           targetId === auth.member.id ||
-          (auth.member.role === 'admin' || auth.member.role === 'parent');
+          auth.member.role === 'admin' ||
+          auth.member.role === 'parent';
         if (!canSet) return json(res, 403, { error: '无权设置该头像' });
         const target = db.prepare('SELECT * FROM members WHERE id = ? AND family_id = ?').get(targetId, auth.familyId);
         if (!target) return json(res, 404, { error: '成员不存在' });
@@ -642,14 +1034,13 @@ async function handle(req, res) {
     }
 
     if (req.method === 'GET' && pathname.startsWith('/api/media/')) {
-      const auth = getAuth(req);
-      if (!auth) return json(res, 401, { error: '未登录' });
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
       const id = pathname.slice('/api/media/'.length);
       const media = db.prepare('SELECT * FROM media WHERE id = ? AND family_id = ?').get(id, auth.familyId);
       if (!media) return json(res, 404, { error: '文件不存在' });
-      const abs = path.join(MEDIA_DIR, media.rel_path);
-      if (!fs.existsSync(abs)) return json(res, 404, { error: '文件丢失' });
-      const data = fs.readFileSync(abs);
+      const data = readMedia(media.rel_path);
+      if (!data) return json(res, 404, { error: '文件丢失' });
       res.writeHead(200, {
         'Content-Type': media.mime_type,
         'Content-Length': data.length,
@@ -660,21 +1051,16 @@ async function handle(req, res) {
     }
 
     if (req.method === 'DELETE' && pathname.startsWith('/api/media/')) {
-      const auth = getAuth(req);
-      if (!auth) return json(res, 401, { error: '未登录' });
+      const auth = requireFamilyAuth(req, res);
+      if (!auth) return;
       const id = pathname.slice('/api/media/'.length);
       const media = db.prepare('SELECT * FROM media WHERE id = ? AND family_id = ?').get(id, auth.familyId);
       if (!media) return json(res, 404, { error: '文件不存在' });
       if (media.created_by !== auth.member.id && auth.member.role !== 'admin') {
         return json(res, 403, { error: '无权删除' });
       }
-      try {
-        fs.unlinkSync(path.join(MEDIA_DIR, media.rel_path));
-      } catch {
-        /* ignore */
-      }
+      deleteMedia(media.rel_path);
       db.prepare('DELETE FROM media WHERE id = ?').run(id);
-      // clear avatar refs
       db.prepare(
         'UPDATE members SET avatar_media_id = NULL, avatar_updated_at = ?, updated_at = ?, revision = ? WHERE avatar_media_id = ?'
       ).run(nowIso(), nowIso(), nextRevision(auth.familyId), id);
@@ -685,6 +1071,7 @@ async function handle(req, res) {
 
     return json(res, 404, { error: 'not found' });
   } catch (err) {
+    console.error(err);
     const status = err.status || 500;
     return json(res, status, { error: err.message || 'server error' });
   }

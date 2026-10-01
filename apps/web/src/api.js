@@ -2,9 +2,19 @@ import * as db from './db.js';
 
 const MAX_BYTES = 20 * 1024 * 1024;
 
-/** Explicitly configured NAS / family server only — never auto-use page origin. */
+/** Official API base — no user-facing NAS URL. Override only via lt_server for advanced/dev. */
 export function apiBase() {
-  return (localStorage.getItem('lt_server') || '').replace(/\/$/, '');
+  const override = (localStorage.getItem('lt_server') || '').replace(/\/$/, '');
+  if (override) return override;
+  if (typeof location !== 'undefined') {
+    if (location.port === '5173' || location.protocol === 'file:') {
+      return 'http://127.0.0.1:8787';
+    }
+    if (location.origin && location.origin !== 'null') {
+      return location.origin.replace(/\/$/, '');
+    }
+  }
+  return 'http://127.0.0.1:8787';
 }
 
 export function setApiBase(url) {
@@ -22,19 +32,26 @@ export function getToken() {
 }
 
 export function getMode() {
-  const mode = localStorage.getItem('lt_mode');
-  if (mode === 'local' || mode === 'family') return mode;
-  if (getToken()) return 'family';
+  if (getToken() && getFamily()?.id) return 'family';
+  if (getToken()) return 'cloud';
   if (getMember()) return 'local';
   return null;
 }
 
 export function isFamilyMode() {
-  return getMode() === 'family' && !!getToken() && !!apiBase();
+  return getMode() === 'family' && !!getToken();
 }
 
 export function isLoggedIn() {
-  return !!getMember();
+  return !!getToken() || !!getMember();
+}
+
+export function isCloudLoggedIn() {
+  return !!getToken() && !!getUser();
+}
+
+export function hasFamily() {
+  return !!(getFamily()?.id && getMember()?.id && getToken());
 }
 
 export function setSession(session) {
@@ -42,13 +59,24 @@ export function setSession(session) {
     localStorage.removeItem('lt_token');
     localStorage.removeItem('lt_member');
     localStorage.removeItem('lt_family');
+    localStorage.removeItem('lt_user');
     localStorage.removeItem('lt_mode');
     return;
   }
-  localStorage.setItem('lt_mode', 'family');
   localStorage.setItem('lt_token', session.token);
-  localStorage.setItem('lt_member', JSON.stringify(session.member));
-  localStorage.setItem('lt_family', JSON.stringify(session.family));
+  if (session.user) localStorage.setItem('lt_user', JSON.stringify(session.user));
+  if (session.member) {
+    localStorage.setItem('lt_member', JSON.stringify(session.member));
+  } else {
+    localStorage.removeItem('lt_member');
+  }
+  if (session.family) {
+    localStorage.setItem('lt_family', JSON.stringify(session.family));
+    localStorage.setItem('lt_mode', 'family');
+  } else {
+    localStorage.removeItem('lt_family');
+    localStorage.setItem('lt_mode', 'cloud');
+  }
 }
 
 export function setLocalSession(member) {
@@ -65,7 +93,16 @@ export function logout() {
   localStorage.removeItem('lt_token');
   localStorage.removeItem('lt_member');
   localStorage.removeItem('lt_family');
+  localStorage.removeItem('lt_user');
   localStorage.removeItem('lt_mode');
+}
+
+export function getUser() {
+  try {
+    return JSON.parse(localStorage.getItem('lt_user') || 'null');
+  } catch {
+    return null;
+  }
 }
 
 export function getMember() {
@@ -155,9 +192,8 @@ export async function loginLocalAccount({ username, password }) {
 
 export async function api(method, path, { body, token, raw } = {}) {
   const base = apiBase();
-  if (!base) throw Object.assign(new Error('未配置家庭服务器'), { offline: true });
   const headers = {};
-  const t = token ?? getToken();
+  const t = token === '' ? '' : token ?? getToken();
   if (t) headers.Authorization = `Bearer ${t}`;
   let payload;
   if (body instanceof FormData) {
@@ -187,11 +223,104 @@ export async function health() {
   return api('GET', '/api/health', { token: '' });
 }
 
+export async function register({ phone, password, displayName, agreed }) {
+  const session = await api('POST', '/api/auth/register', {
+    token: '',
+    body: { phone, password, displayName, agreed, deviceName: 'web' },
+  });
+  setSession(session);
+  return session;
+}
+
+export async function login({ phone, password, username }) {
+  const session = await api('POST', '/api/auth/login', {
+    token: '',
+    body: { phone, password, username, deviceName: 'web' },
+  });
+  setSession(session);
+  return session;
+}
+
+export async function otpSend(phone) {
+  return api('POST', '/api/auth/otp/send', { token: '', body: { phone } });
+}
+
+export async function otpVerify({ phone, code, displayName, agreed }) {
+  const session = await api('POST', '/api/auth/otp/verify', {
+    token: '',
+    body: { phone, code, displayName, agreed, deviceName: 'web' },
+  });
+  setSession(session);
+  return session;
+}
+
+export async function createFamily(familyName) {
+  const res = await api('POST', '/api/families', { body: { familyName } });
+  const cur = {
+    token: getToken(),
+    user: getUser(),
+    member: res.member,
+    family: res.family,
+    serverRevision: res.serverRevision,
+  };
+  setSession(cur);
+  return res;
+}
+
+export async function createInvite(role = 'adult') {
+  return api('POST', '/api/invites', { body: { role } });
+}
+
+export async function acceptInvite(code) {
+  const res = await api('POST', '/api/invites/accept', { body: { code } });
+  setSession({
+    token: getToken(),
+    user: getUser(),
+    member: res.member,
+    family: res.family,
+    serverRevision: res.serverRevision,
+  });
+  return res;
+}
+
+export async function createChild({ displayName, password }) {
+  return api('POST', '/api/members/child', { body: { displayName, password } });
+}
+
+export async function exportFamily() {
+  return api('GET', '/api/families/export');
+}
+
+export async function deleteAccount() {
+  await api('DELETE', '/api/auth/account');
+  logout();
+}
+
+export async function registerPushToken(token, platform = 'web') {
+  return api('POST', '/api/devices/push-token', { body: { token, platform } });
+}
+
+export async function fetchMe() {
+  const me = await api('GET', '/api/me');
+  if (me.user) localStorage.setItem('lt_user', JSON.stringify(me.user));
+  if (me.member) localStorage.setItem('lt_member', JSON.stringify(me.member));
+  else localStorage.removeItem('lt_member');
+  if (me.family) {
+    localStorage.setItem('lt_family', JSON.stringify(me.family));
+    localStorage.setItem('lt_mode', 'family');
+  } else {
+    localStorage.removeItem('lt_family');
+    localStorage.setItem('lt_mode', 'cloud');
+  }
+  if (me.members) await db.kvSet('members', me.members);
+  return me;
+}
+
 export async function saveLocalEntity(entityType, payload, { id, deletedAt } = {}) {
   const entityId = id || db.uuid();
   const updatedAt = db.nowIso();
   const member = getMember();
-  if (!member) throw new Error('请先登录');
+  if (!member) throw new Error('请先加入家庭');
   const family = isFamilyMode();
   const entity = {
     id: entityId,
@@ -223,7 +352,7 @@ export async function saveLocalEntity(entityType, payload, { id, deletedAt } = {
 }
 
 export async function syncNow() {
-  if (!isFamilyMode()) return { skipped: true, reason: 'local-only' };
+  if (!isFamilyMode()) return { skipped: true, reason: 'no-family' };
   const queue = await db.listQueue();
   let pushResult = null;
   if (queue.length) {
@@ -242,7 +371,11 @@ export async function syncNow() {
         }
       } else if (r.conflict && r.entity) {
         await db.dequeue(r.opId);
-        await db.putEntity({ ...r.entity, syncStatus: 'synced', guest: false });
+        await db.putEntity({ ...r.entity, syncStatus: 'conflict', guest: false });
+        await db.kvSet(`conflict:${r.entity.id}`, {
+          at: db.nowIso(),
+          entity: r.entity,
+        });
       }
     }
   }
@@ -258,7 +391,39 @@ export async function syncNow() {
   return { pushResult, pullCount: (pull.entities || []).length, serverRevision: pull.serverRevision };
 }
 
-/** Promote local-only records into family sync queue after connecting NAS. */
+export async function resolveConflict(entityId, choice) {
+  const key = `conflict:${entityId}`;
+  const stored = await db.kvGet(key, null);
+  if (!stored?.entity) return;
+  if (choice === 'server') {
+    await db.putEntity({ ...stored.entity, syncStatus: 'synced', guest: false });
+  } else if (choice === 'mine') {
+    const mine = await db.getEntity(entityId);
+    if (mine) {
+      mine.updatedAt = db.nowIso();
+      mine.syncStatus = 'pending';
+      await db.putEntity(mine);
+      await db.enqueue({
+        opId: db.uuid(),
+        id: mine.id,
+        entityType: mine.entityType,
+        payload: mine.payload,
+        updatedAt: mine.updatedAt,
+        deletedAt: mine.deletedAt,
+        force: true,
+        attempts: 0,
+        createdAt: mine.updatedAt,
+      });
+    }
+  }
+  await db.kvDel(key);
+}
+
+export async function listConflicts() {
+  const all = await db.allEntities();
+  return all.filter((e) => e.syncStatus === 'conflict');
+}
+
 export async function mergeLocalDataToFamily() {
   const all = await db.allEntities();
   const member = getMember();

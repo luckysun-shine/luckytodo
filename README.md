@@ -1,110 +1,70 @@
 # LuckyTodo
 
-家庭便签 / 待办 / 日程 / 计划执行应用。服务跑在飞牛 fnOS（Docker），iPhone 通过 HTTPS 连接；IPA 可用全能签签名安装。
+家庭便签 / 待办 / 日程 / 计划执行应用。**v005 起为主路径标准云端 App**：手机号注册登录、创建家庭、邀请家人；客户端默认连接官方 API，无需自建 NAS。
 
 | 目录 | 说明 |
 |------|------|
-| `apps/api` | Node 22 家庭 API（SQLite + 媒体卷），离线同步推拉、成员、头像/附件 |
-| `apps/web` | 离线优先 Web 客户端（IndexedDB + 同步队列 + PWA） |
-| `ios/` | Capacitor iOS 工程（Xcode / 全能签） |
-| `android/` | Capacitor Android 工程（Android Studio / APK·AAB） |
-| `deploy/` | 飞牛 Docker Compose |
-| `workspace/` | 讨论、PRD、HTML 原型 |
+| `apps/api` | Node 22 多租户 API（用户/家庭/邀请 + SQLite 同步 + 媒体） |
+| `apps/web` | 离线优先 Web 客户端（IndexedDB + 同步队列 + PWA，Figma 六 Tab） |
+| `ios/` | Capacitor iOS 工程 |
+| `android/` | Capacitor Android 工程 |
+| `deploy/` | Docker Compose（官方/自托管实例） |
+| `workspace/` | 讨论、PRD、原型；正式规格见 v005 |
 
 ## 客户端怎么用
 
-1. **首次打开必须注册本机账号**（无游客模式）。
-2. **可不配置 NAS**：本机离线使用；无多端同步、无家庭多账号关联。
-3. 在「我的」里 **连接家庭服务器** 后，才开启同步与多账号能力；本机数据可合并。
+1. **手机号注册 / 登录**（密码或验证码；开发验证码默认 `123456`）。
+2. **创建家庭**，或输入家人发来的**邀请码**加入。
+3. 使用六 Tab：首页 / 待办 / 计划 / 日历 / 便签 / 家庭。
+4. 儿童账号由家长在「家庭」中创建（不独立手机注册）。
+
+规格：[workspace/02-specifications/家庭代办/v005-标准App-方案.md](./workspace/02-specifications/家庭代办/v005-标准App-方案.md)  
+UI：[Figma LuckyTodo UI 原型](https://www.figma.com/design/uwS6F2XKfZdCwMCa3jmBfy/LuckyTodo-UI-原型)
 
 ## 本地开发
 
 ```bash
-# 安装依赖（Capacitor 等）
 npm install
 
-# 终端 1：API（同时可托管静态页）
+# API + 静态页（推荐）
 npm start
-# 浏览器打开 http://127.0.0.1:8787/
+# http://127.0.0.1:8787/
 
-# 或只开前端静态服务
+# 或仅静态前端（API 默认连 8787）
 npm run web
 # http://127.0.0.1:5173/
 ```
-
-API 测试：
 
 ```bash
 npm run test:api
 ```
 
-## 飞牛 fnOS 部署
+环境变量（可选）：
+
+- `LUCKYTODO_TEST_OTP=123456` 开发验证码
+- `LUCKYTODO_SMS_WEBHOOK` 短信网关占位（S2）
+- `LUCKYTODO_OBJECT_STORE` 对象存储占位（S2，未设则本地 media 卷）
+
+## 部署
 
 ```bash
 cd deploy && cp -n .env.example .env
-# 按需编辑 .env 中的 AI_* 变量
 docker compose up -d --build
 ```
 
-用飞牛反向代理把 **HTTPS 域名** 转到容器 `8787`，手机「连接服务器」填写该地址。
+用反向代理把 **HTTPS 域名** 转到容器 `8787`。客户端**自动使用该域名**，用户不再填写服务器地址。
 
-**AI 洞察**：容器内每 12 小时跑批并缓存；管理员可在 App「我的」或浏览器 `/admin.html` 配置模型。说明见 [`apps/api/INSIGHTS.md`](./apps/api/INSIGHTS.md)。**当前不提供完整管理后台**，轻量配置页即可。
+**AI 洞察**：见 [`apps/api/INSIGHTS.md`](./apps/api/INSIGHTS.md)。
 
-## 打 IPA（macOS + Xcode / 全能签）
+## 已实现能力（v005）
 
-本仓库已包含 `ios/` Capacitor 工程与 App Icon。**完整步骤见 [`ios/PACKAGING.md`](./ios/PACKAGING.md)**（签名、Archive、全能签、组件注意点）。
-
-```bash
-npm install
-npx cap sync ios
-npx cap open ios
-```
-
-在 Xcode 中为 **App** 与 **LuckyTodoWidgetExtension** 配置同一 Signing Team 后 Archive 导出 IPA，再用全能签签名安装。
-
-- 提醒：原生端用 Local Notifications；浏览器/PWA 用 Web Notification。
-- 重签名场景下不以 APNs 推送为准。
-
-## 打 APK / AAB（Android Studio）
-
-本仓库已包含 `android/` Capacitor 工程、应用图标与启动图。**完整步骤见 [`android/PACKAGING.md`](./android/PACKAGING.md)**。
-
-```bash
-npm install
-npx cap sync android
-npx cap open android
-```
-
-在 Android Studio 中真机 Run 验证后：
-
-- Debug 试用：`Build → Build APK(s)`，或 `cd android && ./gradlew assembleDebug`
-- 正式包：配置 `android/keystore.properties` 后 `./gradlew assembleRelease`（APK）或 `bundleRelease`（AAB）
-
-Android 端与 iOS / Web 共用同一套业务，并提供「今日提醒 / 家庭日历」主屏组件（见 [`android/WIDGETS.md`](./android/WIDGETS.md)）。
-
-## 已实现能力（对照 v003 + 后续迭代）
-
-- 强制本机登录；NAS 可选
-- 本机优先写入 + 同步队列；联网后 push / pull
-- 便签 / 待办 / 日程 / 计划（含里程碑节点提醒与完成情况）
-- 头像与附件，单文件 ≤ 20MB，单条最多 9 个
-- 皮肤：夜航 / 日间 / 暖纸；字号标准 / 大
-- 启动闪屏 + PWA Service Worker + LuckyTodo Logo
-- Capacitor（iOS + Android）：StatusBar / SplashScreen / LocalNotifications / Haptics
-- **主屏组件（v004）**：今日提醒 + 家庭日历。iOS 见 `ios/WIDGETS.md`；Android 见 `android/WIDGETS.md`。
-
-## 主屏组件（iOS）
-
-| 组件 | 尺寸 | 说明 |
-|------|------|------|
-| 今日提醒 | 小 / 中 / 大 | 今日提醒列表，点进 App |
-| 家庭日历 | 中 / 大 | 周条/月历落点；iOS 17+ 可在组件内添加待办 |
-
-```bash
-npm install && npx cap sync ios && npx cap open ios
-```
-
-Xcode 中为 **App** 与 **LuckyTodoWidgetExtension** 配置同一 Signing Team，确认 App Groups 含 `group.family.luckytodo.app`。浏览器无法预览系统组件；App 内「我的」可查看最近快照并手动刷新。
+- 云端注册 / 登录 / OTP（开发码）
+- 创建家庭 + 邀请码加入 + 儿童账号
+- 本机优先写入 + 同步队列；冲突可选手动解决
+- 便签 / 待办 / 日程 / 计划；便签可转待办
+- 六 Tab + 首页 / 家庭对齐 Figma 结构
+- 导出家庭数据、注销账号、推送 token 登记占位
+- 主屏组件（iOS / Android）仍可用
 
 ## 默认端口
 

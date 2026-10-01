@@ -1,4 +1,4 @@
-/** LuckyTodo skin aligned to the Todoist dashboard redesign (cyan, soft cards, members). */
+/** LuckyTodo · Figma 家庭青绿（v005）+ 旧皮肤可切换 */
 export const css = `
 :root {
   color-scheme: light;
@@ -10,7 +10,7 @@ export const css = `
   --space-5: 24px;
   --space-6: 32px;
   --radius-sm: 12px;
-  --radius-md: 18px;
+  --radius-md: 20px;
   --radius-lg: 24px;
   --radius-xl: 28px;
   --font-display: "Plus Jakarta Sans", "Noto Sans SC", sans-serif;
@@ -18,9 +18,9 @@ export const css = `
   --tap: 48px;
   --tile-green: #3dbd7f;
   --tile-red: #f34e4e;
-  --tile-teal: #00cabe;
+  --tile-teal: #4eb7ac;
   --prio-high: #f34e4e;
-  --prio-mid: #00cabe;
+  --prio-mid: #4eb7ac;
   --prio-low: #3dbd7f;
 }
 * { box-sizing: border-box; }
@@ -49,25 +49,25 @@ button { cursor: pointer; }
 }
 
 #app {
-  --bg: #ffffff;
+  --bg: #f5f6f8;
   --bg-elev: #ffffff;
   --surface: #ffffff;
   --task: #ffffff;
-  --chip: #f3f4f6;
+  --chip: #eef1f4;
   --nav: #ffffff;
   --text: #1c1c1e;
   --text-soft: #1c1c1e;
   --muted: #8e8e93;
-  --accent: #2dd8fe;
-  --accent-strong: #00a8d6;
-  --on-accent: #07323c;
+  --accent: #4eb7ac;
+  --accent-strong: #3a9e94;
+  --on-accent: #ffffff;
   --done: #3dbd7f;
   --warn: #f5a524;
   --miss: #f34e4e;
-  --line: #ececf1;
-  --field: #f4f5f7;
+  --line: #e8eaed;
+  --field: #f0f2f5;
   --glow: transparent;
-  --shadow: 0 10px 28px rgba(28, 28, 30, 0.06);
+  --shadow: 0 8px 24px rgba(28, 28, 30, 0.06);
   max-width: 430px;
   margin: 0 auto;
   height: 100dvh;
@@ -1235,4 +1235,114 @@ button { cursor: pointer; }
 .prio-high { background: var(--prio-high); }
 .prio-medium { background: var(--prio-mid); }
 .prio-low { background: var(--prio-low); }
+
+/* v005 cloud + Figma family UI */
+.tabs { gap: 0; padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); }
+.tabs button {
+  flex: 1; min-width: 0; padding: 6px 2px;
+  font-size: 0.62rem; gap: 2px;
+}
+.tabs button svg { width: 20px; height: 20px; }
+.cloud-auth {
+  min-height: 100%; padding: 24px 20px 40px;
+  background: linear-gradient(180deg, #eef8f6 0%, var(--bg) 42%);
+  display: flex; flex-direction: column; gap: 18px;
+}
+.cloud-brand { text-align: center; padding-top: 12px; }
+.cloud-brand img {
+  width: 72px; height: 72px; border-radius: 18px;
+  box-shadow: var(--shadow);
+}
+.cloud-brand h1 { margin: 12px 0 4px; font-size: 1.6rem; font-weight: 800; }
+.cloud-brand p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+.cloud-card {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 20px 18px 22px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.cloud-card h2 { margin: 0; font-size: 1.25rem; }
+.cloud-card .lead { margin: 0; color: var(--muted); font-size: 0.88rem; }
+.cloud-switch {
+  display: flex; justify-content: space-between; align-items: center;
+  font-weight: 700; font-size: 0.95rem;
+}
+.cloud-switch button {
+  border: 0; background: transparent; color: var(--accent-strong);
+  font-weight: 700; padding: 0;
+}
+.cloud-foot {
+  text-align: center; color: var(--muted); font-size: 0.88rem;
+}
+.cloud-foot a, .cloud-foot button.link {
+  color: var(--accent-strong); font-weight: 700;
+  border: 0; background: transparent; padding: 0;
+}
+.legal-row {
+  display: flex; gap: 8px; align-items: flex-start;
+  font-size: 0.78rem; color: var(--muted); line-height: 1.4;
+}
+.legal-row a { color: var(--accent-strong); }
+.home-hello { padding: 8px 4px 4px; }
+.home-hello h1 { margin: 0; font-size: 1.35rem; font-weight: 800; }
+.home-hello p { margin: 4px 0 0; color: var(--muted); font-size: 0.85rem; }
+.home-search {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--field); border-radius: 999px;
+  padding: 10px 14px; margin: 8px 0 16px;
+}
+.home-search input {
+  flex: 1; border: 0; background: transparent; outline: none;
+  min-width: 0;
+}
+.section-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin: 8px 0 10px;
+}
+.section-head h2 { margin: 0; font-size: 1rem; }
+.section-head button {
+  border: 0; background: transparent; color: var(--accent-strong);
+  font-weight: 700; font-size: 0.82rem;
+}
+.plan-rail { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+.member-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.member-card {
+  background: var(--surface); border-radius: var(--radius-md);
+  padding: 14px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
+}
+.member-card .role {
+  font-size: 0.72rem; color: var(--accent-strong); font-weight: 700;
+}
+.activity-card {
+  background: color-mix(in oklch, var(--accent) 10%, white);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  font-size: 0.86rem; line-height: 1.55; color: var(--text-soft);
+}
+.activity-card p { margin: 0 0 8px; }
+.activity-card p:last-child { margin: 0; }
+.invite-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent); color: var(--on-accent);
+  border: 0; border-radius: 999px; padding: 8px 14px;
+  font-weight: 700; font-size: 0.82rem;
+}
+.streak-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
+  color: var(--accent-strong);
+  border-radius: 999px; padding: 4px 10px;
+  font-size: 0.75rem; font-weight: 700;
+}
+.conflict-banner {
+  margin: 8px 16px; padding: 12px 14px;
+  background: color-mix(in oklch, var(--warn) 18%, white);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+}
+.conflict-banner .actions { display: flex; gap: 8px; margin-top: 8px; }
 `;
