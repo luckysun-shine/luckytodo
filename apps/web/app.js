@@ -35,7 +35,6 @@ const state = {
   query: '',
   mergeCount: 0,
   planId: null,
-  authMode: 'password',
   calCursor: (() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -448,23 +447,12 @@ function renderCloudLogin() {
     maxlength: '11',
   });
   const pass = authPasswordField('密码', { autocomplete: 'current-password' });
-  const code = h('input', { type: 'text', inputmode: 'numeric', placeholder: '6 位验证码', maxlength: '6' });
   const agreed = h('input', { type: 'checkbox' });
-  const otpMode = state.authMode === 'otp';
 
   const submit = async () => {
     try {
       if (!agreed.checked) return toast('请先同意用户协议与隐私政策');
-      let session;
-      if (otpMode) {
-        session = await api.otpVerify({
-          phone: phone.value.trim(),
-          code: code.value.trim(),
-          agreed: true,
-        });
-      } else {
-        session = await api.login({ phone: phone.value.trim(), password: pass.input.value });
-      }
+      const session = await api.login({ phone: phone.value.trim(), password: pass.input.value });
       await afterLogin(session);
     } catch (e) {
       toast(e.message);
@@ -482,50 +470,16 @@ function renderCloudLogin() {
     ]),
     h('div', { className: 'cloud-card' }, [
       h('h2', { text: '欢迎回来' }),
-      h('p', { className: 'lead', text: '登录后，和家人一起开启有序的一天。' }),
-      h('div', { className: 'cloud-switch' }, [
-        h('span', { text: otpMode ? '验证码登录' : '密码登录' }),
-        h('button', {
-          type: 'button',
-          text: otpMode ? '密码登录' : '验证码登录',
-          onClick: () => {
-            state.authMode = otpMode ? 'password' : 'otp';
-            render();
-          },
-        }),
-      ]),
+      h('p', { className: 'lead', text: '使用手机号和密码登录，和家人一起开启有序的一天。' }),
       fieldEl('手机号', phone),
-      otpMode
-        ? h('div', { className: 'field' }, [
-            h('label', { text: '验证码' }),
-            h('div', { style: 'display:flex;gap:8px' }, [
-              code,
-              h('button', {
-                type: 'button',
-                className: 'btn secondary',
-                text: '获取',
-                style: 'flex:none;min-width:88px',
-                onClick: async () => {
-                  try {
-                    const r = await api.otpSend(phone.value.trim());
-                    toast(r.debugCode ? `验证码 ${r.debugCode}` : '验证码已发送');
-                  } catch (e) {
-                    toast(e.message);
-                  }
-                },
-              }),
-            ]),
-          ])
-        : pass.el,
-      otpMode
-        ? null
-        : h('button', {
-            type: 'button',
-            className: 'link',
-            text: '忘记密码？',
-            style: 'align-self:flex-start;border:0;background:transparent;color:var(--accent-strong);font-weight:700',
-            onClick: () => toast('请使用验证码登录，或联系家人管理员'),
-          }),
+      pass.el,
+      h('button', {
+        type: 'button',
+        className: 'link',
+        text: '忘记密码？',
+        style: 'align-self:flex-start;border:0;background:transparent;color:var(--accent-strong);font-weight:700',
+        onClick: () => toast('请联系家庭管理员协助重置，或重新注册后加入家庭'),
+      }),
       h('label', { className: 'legal-row' }, [
         agreed,
         h('span', {
