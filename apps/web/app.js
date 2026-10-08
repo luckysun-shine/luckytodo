@@ -11,6 +11,8 @@ style.textContent = css;
 document.head.appendChild(style);
 
 const root = document.getElementById('app');
+/** Bump when replacing brand assets so browsers skip stale cache. */
+const LOGO_VER = '20261003';
 
 function dayKey(d) {
   const y = d.getFullYear();
@@ -277,54 +279,60 @@ async function loadMembers() {
 }
 
 async function boot() {
-  applyChrome();
-  native.registerServiceWorker();
-  await native.initNative().catch(() => {});
-  bindDeepLinks();
-  if (!api.getToken()) {
-    state.screen = 'cloud-login';
-    render();
-    hideBootSplash();
-    widget.publishWidgetSnapshot().catch(() => {});
-    return;
-  }
   try {
-    await api.fetchMe();
-  } catch (e) {
-    if (e.status === 401) {
-      api.logout();
+    applyChrome();
+    native.registerServiceWorker();
+    await native.initNative().catch(() => {});
+    bindDeepLinks();
+    if (!api.getToken()) {
       state.screen = 'cloud-login';
-      render();
-      hideBootSplash();
+      await render();
       return;
     }
-  }
-  if (!api.hasFamily()) {
-    state.screen = 'family-gate';
-    render();
+    try {
+      await api.fetchMe();
+    } catch (e) {
+      if (e.status === 401) {
+        api.logout();
+        state.screen = 'cloud-login';
+        await render();
+        return;
+      }
+    }
+    if (!api.hasFamily()) {
+      state.screen = 'family-gate';
+      await render();
+      return;
+    }
+    state.screen = 'home';
+    state.tab = 'home';
+    await loadMembers();
+    try {
+      await maybeSync();
+    } catch {
+      /* offline ok */
+    }
+    await render();
+    widget.consumeWidgetDrafts().then(() => widget.publishWidgetSnapshot()).catch(() => {});
+  } catch (e) {
+    console.error('[LuckyTodo] boot failed', e);
+    state.screen = 'cloud-login';
+    try {
+      await render();
+    } catch (err) {
+      console.error('[LuckyTodo] render failed', err);
+    }
+  } finally {
     hideBootSplash();
-    return;
   }
-  state.screen = 'home';
-  state.tab = 'home';
-  await loadMembers();
-  try {
-    await maybeSync();
-  } catch {
-    /* offline ok */
-  }
-  render();
-  hideBootSplash();
-  widget.consumeWidgetDrafts().then(() => widget.publishWidgetSnapshot()).catch(() => {});
 }
 
 function hideBootSplash() {
   const el = document.getElementById('boot-splash');
   if (!el) return;
-  requestAnimationFrame(() => {
-    el.classList.add('hide');
-    setTimeout(() => el.remove(), 400);
-  });
+  el.classList.add('hide');
+  el.style.pointerEvents = 'none';
+  setTimeout(() => el.remove(), 350);
 }
 
 function bindDeepLinks() {
@@ -333,7 +341,7 @@ function bindDeepLinks() {
     if (!info) return;
     if (info.tab) {
       // map legacy today -> home
-      state.tab = info.tab === 'today' ? 'home' : info.tab === 'me' ? 'family' : info.tab;
+      state.tab = info.tab === 'today' ? 'home' : info.tab === 'family' ? 'me' : info.tab;
     }
     if (info.path === 'create' || info.day) {
       openCreateForm(info.type === 'event' ? 'event' : 'todo');
@@ -465,8 +473,11 @@ function renderCloudLogin() {
 
   return h('div', { className: 'cloud-auth' }, [
     h('div', { className: 'cloud-brand' }, [
-      h('img', { src: './public/logo.png', alt: 'LuckyTodo' }),
-      h('h1', { text: 'LuckyTodo' }),
+      h('img', {
+        className: 'brand-wordmark',
+        src: `./public/logo-horizontal.png?v=${LOGO_VER}`,
+        alt: 'luckytodo',
+      }),
       h('p', { text: '把小日子，安排得刚刚好' }),
     ]),
     h('div', { className: 'cloud-card' }, [
@@ -547,8 +558,11 @@ function renderCloudRegister() {
   const agreed = h('input', { type: 'checkbox' });
   return h('div', { className: 'cloud-auth' }, [
     h('div', { className: 'cloud-brand' }, [
-      h('img', { src: './public/logo.png', alt: '' }),
-      h('h1', { text: '创建账号' }),
+      h('img', {
+        className: 'brand-wordmark',
+        src: `./public/logo-horizontal.png?v=${LOGO_VER}`,
+        alt: 'luckytodo',
+      }),
       h('p', { text: '注册后即可创建或加入家庭' }),
     ]),
     h('div', { className: 'cloud-card' }, [
@@ -605,6 +619,11 @@ function renderFamilyGate() {
   const mode = state.gateMode || 'create';
   return h('div', { className: 'cloud-auth' }, [
     h('div', { className: 'cloud-brand' }, [
+      h('img', {
+        className: 'brand-wordmark',
+        src: `./public/logo-horizontal.png?v=${LOGO_VER}`,
+        alt: 'luckytodo',
+      }),
       h('h1', { text: mode === 'join' ? '加入家庭' : '创建家庭' }),
       h('p', {
         text:
@@ -625,7 +644,9 @@ function renderFamilyGate() {
             if (mode === 'join') {
               await api.acceptInvite(invite.value.trim());
             } else {
-              await api.createFamily(familyName.value.trim());
+              const name = familyName.value.trim();
+              if (!name) return toast('请填写家庭名称');
+              await api.createFamily(name);
             }
             const localCount = await api.countGuestRecords();
             if (localCount > 0) {
@@ -639,6 +660,21 @@ function renderFamilyGate() {
             }
             render();
           } catch (e) {
+            // 已建家但本地会话未刷新时，拉一次 /me 后进入首页
+            if (String(e.message || '').includes('已加入')) {
+              try {
+                await api.fetchMe();
+                if (api.hasFamily()) {
+                  state.screen = 'home';
+                  state.tab = 'home';
+                  await loadMembers();
+                  render();
+                  return;
+                }
+              } catch {
+                /* fall through */
+              }
+            }
             toast(e.message);
           }
         },
@@ -1013,20 +1049,20 @@ function renderMerge() {
 }
 
 function tabs() {
+  // 五栏单行：家庭能力已并入「我的」；便签从首页入口 / FAB 进入，避免底栏折行
   const items = [
     ['home', '首页', icons.home],
     ['todo', '待办', icons.todo],
     ['plans', '计划', icons.plans],
     ['cal', '日历', icons.cal],
-    ['notes', '便签', icons.notes],
-    ['family', '家庭', icons.family],
+    ['me', '我的', icons.me],
   ];
   return h(
     'nav',
     { className: 'tabs', role: 'tablist', 'aria-label': '主导航' },
     items.map((item) => {
       const [id, label, icon] = item;
-      const active = state.tab === id;
+      const active = state.tab === id || (id === 'home' && state.tab === 'notes');
       return h('button', {
         className: active ? 'active' : '',
         role: 'tab',
@@ -1934,393 +1970,6 @@ async function renderInsightsBody() {
   return wrap;
 }
 
-async function renderMeBody() {
-  const me = api.getMember();
-  const family = api.getFamily();
-  const lastSync = await db.kvGet('lastSyncAt', null);
-  const queue = await db.listQueue();
-  const fileInput = h('input', { type: 'file', accept: 'image/*', className: 'hidden' });
-  fileInput.addEventListener('change', async () => {
-    const file = fileInput.files?.[0];
-    if (!file) return;
-    try {
-      const media = await api.uploadMedia(file, { purpose: 'avatar', memberId: me?.id });
-      if (me) {
-        me.avatarMediaId = media.id;
-        localStorage.setItem('lt_member', JSON.stringify(me));
-      }
-      toast(media.pending ? '头像已保存，待上传' : '头像已更新');
-      render();
-      maybeSync();
-    } catch (e) {
-      toast(e.message);
-    }
-  });
-
-  const avatar = h(
-    'button',
-    {
-      className: 'avatar',
-      'aria-label': '更换头像',
-      onClick: () => {
-        if (!me) return toast('请先登录');
-        fileInput.click();
-      },
-    },
-    [me?.displayName?.[0] || '?', h('span', { className: 'cam', text: '✎' })]
-  );
-
-  const familyMode = api.isFamilyMode();
-  const todos = await listActive('todo');
-  const meId = me?.id || 'guest';
-  const openCount = todos.filter((t) => (t.payload.completions || {})[meId] !== 'done').length;
-  const doneCount = todos.length - openCount;
-  const wrap = h('div', {}, [
-    fileInput,
-    h('div', { className: 'profile-head' }, [
-      avatar,
-      h('h2', { text: me?.displayName || '未登录' }),
-      h('p', {
-        text: me
-          ? `${roleLabel(me.role)} · @${me.username}${familyMode ? ` · ${family?.name || '家庭'}` : ' · 本机账号'}`
-          : '请先登录',
-      }),
-    ]),
-    h('div', { className: 'profile-stats' }, [
-      h('div', { className: 'profile-stat', text: `${openCount} 件未完成` }),
-      h('div', { className: 'profile-stat', text: `${doneCount} 件已完成` }),
-    ]),
-    state.members.length
-      ? h('div', { className: 'member-rail' }, state.members.filter((m) => !m.disabled).map((m) =>
-          h('div', { className: 'member-pill' }, [
-            h('span', { className: 'face', text: (m.displayName || '?').slice(0, 1) }),
-            h('span', { text: m.displayName || '成员' }),
-          ])
-        ))
-      : null,
-    h('button', {
-      type: 'button',
-      className: 'settings-row',
-      onClick: () => {
-        state.tab = 'insights';
-        render();
-      },
-    }, [
-      h('span', { html: icons.insights, 'aria-hidden': 'true' }),
-      h('span', { className: 'grow', text: '洞察' }),
-      h('span', { className: 'chev', text: '›' }),
-    ]),
-  ]);
-
-  if (familyMode) {
-    appendNodes(
-      wrap,
-      h('div', { className: 'card' }, [
-        h('div', { className: 'row' }, [
-          h('div', { className: 'grow' }, [
-            h('h3', { text: '同步' }),
-            h('p', {
-              text: lastSync
-                ? `最近 ${fmt(lastSync)} · 队列 ${queue.length}`
-                : `尚未同步 · 队列 ${queue.length}`,
-            }),
-          ]),
-          h('button', {
-            className: 'icon-btn',
-            'aria-label': '立即同步',
-            html: icons.sync,
-            onClick: async () => {
-              try {
-                const r = await api.syncNow();
-                toast(r.skipped ? '当前无法同步' : `已同步，拉取 ${r.pullCount} 条`);
-                render();
-              } catch (e) {
-                toast(e.message);
-              }
-            },
-          }),
-        ]),
-        h('p', { className: 'muted', style: 'margin-top:8px', text: api.apiBase() }),
-      ])
-    );
-
-    if (me?.role === 'admin') {
-      let aiSettings = null;
-      try {
-        const res = await api.api('GET', '/api/settings/ai');
-        aiSettings = res.settings;
-      } catch {
-        aiSettings = null;
-      }
-      const baseInput = h('input', {
-        type: 'url',
-        placeholder: 'https://api.deepseek.com/v1',
-        value: aiSettings?.baseUrl || '',
-      });
-      const modelInput = h('input', {
-        type: 'text',
-        placeholder: 'deepseek-chat',
-        value: aiSettings?.model || '',
-      });
-      const keyInput = h('input', {
-        type: 'password',
-        placeholder: aiSettings?.apiKeySet ? '已保存密钥（留空不修改）' : 'API Key',
-        value: '',
-      });
-      const enabledInput = h('input', { type: 'checkbox' });
-      if (aiSettings?.enabled) enabledInput.checked = true;
-
-      appendNodes(
-        wrap,
-        h('div', { className: 'section-label', text: 'AI 洞察（服务器）' }),
-        h('div', { className: 'card stack' }, [
-          h('p', {
-            className: 'muted',
-            text: '每 12 小时在 NAS 上跑一次并缓存结果。也可在电脑浏览器打开 /admin.html。',
-          }),
-          h('label', { className: 'row', style: 'gap:8px;margin-top:8px' }, [
-            enabledInput,
-            h('span', { text: '启用 AI 定时洞察' }),
-          ]),
-          h('div', { className: 'field' }, [h('label', { text: 'API Base URL' }), baseInput]),
-          h('div', { className: 'field' }, [h('label', { text: '模型' }), modelInput]),
-          h('div', { className: 'field' }, [h('label', { text: 'API Key' }), keyInput]),
-          h('button', {
-            className: 'btn secondary block',
-            style: 'margin-top:12px',
-            text: '保存 AI 配置',
-            onClick: async () => {
-              try {
-                await api.api('PUT', '/api/settings/ai', {
-                  body: {
-                    enabled: enabledInput.checked,
-                    baseUrl: baseInput.value.trim(),
-                    model: modelInput.value.trim(),
-                    apiKey: keyInput.value,
-                  },
-                });
-                toast('AI 配置已保存');
-                keyInput.value = '';
-                render();
-              } catch (e) {
-                toast(e.message);
-              }
-            },
-          }),
-          h('button', {
-            className: 'btn ghost block',
-            text: '立即生成洞察',
-            onClick: async () => {
-              try {
-                await api.api('POST', '/api/insights/run');
-                toast('洞察已生成');
-                state.tab = 'insights';
-                render();
-              } catch (e) {
-                toast(e.message);
-              }
-            },
-          }),
-        ])
-      );
-    }
-  } else {
-    appendNodes(
-      wrap,
-      h('div', { className: 'card' }, [
-        h('h3', { text: '家庭服务器' }),
-        h('p', {
-          text: '现在只在本机使用，没有多端同步和家庭多账号关联。连接飞牛 NAS 后即可开启。',
-        }),
-        h('button', {
-          className: 'btn secondary block',
-          style: 'margin-top:12px',
-          text: '连接家庭服务器',
-          onClick: () => {
-            state.screen = 'connect';
-            render();
-          },
-        }),
-      ])
-    );
-  }
-
-  appendNodes(
-    wrap,
-    (() => {
-      let snap = null;
-      try {
-        snap = JSON.parse(localStorage.getItem('lt_widget_snapshot') || 'null');
-      } catch {
-        snap = null;
-      }
-      const remCount = (snap?.reminders || []).filter((r) => !r.done).length;
-      const markCount = (snap?.markedDays || []).length;
-      const updated = snap?.updatedAt ? fmt(snap.updatedAt) : '尚未生成';
-      return [
-        h('div', { className: 'section-label', text: '主屏组件' }),
-        h('div', { className: 'card' }, [
-          h('h3', { text: '今日提醒 / 家庭日历' }),
-          h('p', {
-            text: snap
-              ? `今日提醒 ${remCount} 条 · 日历落点 ${markCount} 天`
-              : '打开 App 并登录后会写入组件快照',
-          }),
-          h('p', { className: 'muted', text: `最近快照：${updated}` }),
-          h('p', {
-            className: 'muted',
-            style: 'margin-top:8px',
-            text: '长按主屏 → 添加组件 → LuckyTodo。iOS 需 17+ 与 App Group；Android 安装后即可添加「今日提醒 / 家庭日历」。',
-          }),
-          h('button', {
-            className: 'btn secondary block',
-            style: 'margin-top:12px',
-            text: '刷新组件数据',
-            onClick: async () => {
-              try {
-                await widget.publishWidgetSnapshot();
-                toast('已刷新主屏组件快照');
-                render();
-              } catch (e) {
-                toast(e.message || '刷新失败');
-              }
-            },
-          }),
-        ]),
-      ];
-    })(),
-    h('div', { className: 'section-label', text: '外观' }),
-    h('div', { className: 'seg', style: 'margin-bottom:12px' }, [
-      ['night', '深色'],
-      ['day', '浅色'],
-      ['paper', '暖纸'],
-    ].map(([id, label]) =>
-      h('button', {
-        className: state.theme === id ? 'on' : '',
-        text: label,
-        onClick: () => {
-          state.theme = id;
-          localStorage.setItem('lt_theme', id);
-          applyChrome();
-          render();
-        },
-      })
-    )),
-    h('div', { className: 'seg' }, [
-      h('button', {
-        className: state.font === 'standard' ? 'on' : '',
-        text: '标准字号',
-        onClick: () => {
-          state.font = 'standard';
-          localStorage.setItem('lt_font', 'standard');
-          applyChrome();
-          render();
-        },
-      }),
-      h('button', {
-        className: state.font === 'large' ? 'on' : '',
-        text: '大字号',
-        onClick: () => {
-          state.font = 'large';
-          localStorage.setItem('lt_font', 'large');
-          applyChrome();
-          render();
-        },
-      }),
-    ])
-  );
-
-  if (familyMode && me?.role === 'admin') {
-    appendNodes(
-      wrap,
-      h('div', { className: 'section-label', text: '家庭成员' }),
-      h('div', { className: 'card stack' }, [
-        ...state.members.map((m) =>
-          h('div', { className: 'row' }, [
-            h('div', { className: 'grow' }, [
-              h('h3', { text: m.displayName }),
-              h('p', { text: `@${m.username} · ${roleLabel(m.role)}` }),
-            ]),
-          ])
-        ),
-        h('button', {
-          className: 'btn secondary block',
-          text: '添加成员',
-          onClick: async () => {
-            const displayName = prompt('显示名');
-            const username = prompt('用户名（小写字母数字）');
-            const password = prompt('初始密码');
-            const role = prompt('角色 parent / adult / child', 'child');
-            if (!displayName || !username || !password) return;
-            try {
-              await api.api('POST', '/api/members', {
-                body: { displayName, username, password, role },
-              });
-              const meRes = await api.api('GET', '/api/me');
-              state.members = meRes.members;
-              await db.kvSet('members', meRes.members);
-              toast('成员已添加');
-              render();
-            } catch (e) {
-              toast(e.message);
-            }
-          },
-        }),
-      ])
-    );
-  }
-
-  appendNodes(
-    wrap,
-    h('div', { style: 'height:16px' }),
-    h('button', {
-      className: 'settings-row danger',
-      text: '退出登录',
-      onClick: async () => {
-        if (familyMode) {
-          try {
-            await api.api('POST', '/api/auth/logout');
-          } catch {
-            /* ignore */
-          }
-        }
-        api.logout();
-        widget.publishWidgetSnapshot().catch(() => {});
-        state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
-        render();
-      },
-    }),
-    familyMode
-      ? h('button', {
-          className: 'btn ghost block',
-          text: '断开家庭服务器（改回本机使用）',
-          onClick: () => {
-            if (!confirm('断开后将停止同步，本机数据保留。可用本机账号继续离线使用。')) return;
-            const localMember = api.getMember();
-            api.clearApiBase();
-            localStorage.removeItem('lt_token');
-            if (localMember) {
-              api.setLocalSession({
-                id: localMember.id,
-                displayName: localMember.displayName,
-                username: localMember.username,
-                role: localMember.role || 'admin',
-                local: true,
-              });
-            } else {
-              api.logout();
-            }
-            state.tab = 'me';
-            state.screen = api.isLoggedIn() ? 'home' : 'local-login';
-            toast('已改回本机使用');
-            widget.publishWidgetSnapshot().catch(() => {});
-            render();
-          },
-        })
-      : null
-  );
-  return wrap;
-}
 
 function myId() {
   return api.getMember()?.id || 'guest';
@@ -3379,10 +3028,16 @@ async function renderHomeBody() {
         h('p', { text: `今天也是元气满满的一天 · ${fmtDateNice()}` }),
         streak > 0 ? h('span', { className: 'streak-pill', text: `连续打卡 ${streak} 天` }) : null,
       ]),
-      h('div', {
+      h('button', {
+        type: 'button',
         className: 'face',
-        style: 'width:40px;height:40px;font-size:1rem;margin:0',
+        style: 'width:40px;height:40px;font-size:1rem;margin:0;border:0;cursor:pointer',
         text: (name || '?').slice(0, 1),
+        'aria-label': '个人中心',
+        onClick: () => {
+          state.tab = 'me';
+          render();
+        },
       }),
     ]),
     h('div', { className: 'home-search' }, [h('span', { html: icons.search, 'aria-hidden': 'true' }), search]),
@@ -3408,7 +3063,7 @@ async function renderHomeBody() {
     const rail = h('div', { className: 'plan-rail' });
     plans.filter((p) => match(p.payload.title)).slice(0, 6).forEach((p, i) => {
       const prog = milestoneProgress(p.payload.milestones);
-      const pct = prog.total ? Math.round((prog.done / prog.total) * 100) : 0;
+      const pct = prog?.total ? Math.round((prog.done / prog.total) * 100) : 0;
       appendNodes(
         rail,
         h(
@@ -3455,6 +3110,44 @@ async function renderHomeBody() {
     for (const t of preview) {
       const done = (t.payload.completions || {})[me?.id || 'guest'] === 'done';
       appendNodes(wrap, todoCard(t, done, me));
+    }
+  }
+
+  const notes = (await listActive('note')).filter((n) => match(n.payload.title));
+  appendNodes(
+    wrap,
+    h('div', { className: 'section-head', style: 'margin-top:18px' }, [
+      h('h2', { text: '便签' }),
+      h('button', {
+        type: 'button',
+        text: '全部便签',
+        onClick: () => {
+          state.tab = 'notes';
+          render();
+        },
+      }),
+    ])
+  );
+  if (!notes.length) {
+    appendNodes(
+      wrap,
+      h('p', { className: 'muted', text: '还没有便签。点右下角 + 可新建。' })
+    );
+  } else {
+    for (const n of notes.slice(0, 3)) {
+      appendNodes(
+        wrap,
+        h('div', {
+          className: 'card pressable',
+          onClick: () => {
+            state.tab = 'notes';
+            render();
+          },
+        }, [
+          h('h3', { text: `${n.payload.pinned ? '📌 ' : ''}${n.payload.title}` }),
+          h('p', { text: n.payload.body || visibilityLabel(n.payload.visibility) || '便签' }),
+        ])
+      );
     }
   }
   return wrap;
@@ -3533,9 +3226,10 @@ async function renderNotesBody() {
   return wrap;
 }
 
-async function renderFamilyBody() {
+async function renderMeBody() {
   const family = api.getFamily();
   const me = api.getMember();
+  const user = api.getUser();
   await loadMembers();
   const members = state.members.filter((m) => !m.disabled);
   const todos = await listActive('todo');
@@ -3557,9 +3251,21 @@ async function renderFamilyBody() {
     activity.push(`${who?.displayName || '家人'} 发布了便签「${n.payload.title}」`);
   }
 
+  const display = me?.displayName || user?.displayName || '我';
   const wrap = h('div', { className: 'pad' }, [
+    h('div', { className: 'profile-head', style: 'margin-bottom:16px' }, [
+      h('div', {
+        className: 'avatar',
+        style: 'width:64px;height:64px;font-size:1.4rem',
+        text: display.slice(0, 1),
+      }),
+      h('h2', { text: display }),
+      h('p', {
+        text: `${roleLabel(me?.role)} · ${family?.name || '未命名家庭'}${user?.phone ? ` · ${user.phone}` : ''}`,
+      }),
+    ]),
     h('div', { className: 'section-head' }, [
-      h('h2', { text: family?.name ? `${family.name}的温馨空间` : '家庭' }),
+      h('h2', { text: family?.name ? `${family.name}` : '我的家庭' }),
       ['admin', 'parent'].includes(me?.role)
         ? h('button', {
             type: 'button',
@@ -3639,7 +3345,6 @@ async function renderFamilyBody() {
   else for (const line of activity.slice(0, 6)) appendNodes(act, h('p', { text: line }));
   appendNodes(wrap, act);
 
-  // settings / S2 actions
   appendNodes(
     wrap,
     h('div', { className: 'card', style: 'margin-top:16px' }, [
@@ -3741,27 +3446,39 @@ async function renderHome() {
     cal: '日历',
     plans: '计划',
     notes: '便签',
-    family: '家庭',
+    me: '个人中心',
     insights: '洞察',
   };
   // legacy tab remap
   if (state.tab === 'today') state.tab = 'home';
-  if (state.tab === 'me') state.tab = 'family';
+  if (state.tab === 'family') state.tab = 'me';
   const bodyMap = {
     home: renderHomeBody,
     todo: renderTodoBody,
     cal: renderCalBody,
     plans: renderPlansBody,
     notes: renderNotesBody,
-    family: renderFamilyBody,
+    me: renderMeBody,
     insights: renderInsightsBody,
   };
   const body = await (bodyMap[state.tab] || renderHomeBody)();
+  const back =
+    state.tab === 'notes'
+      ? h('button', {
+          className: 'icon-btn',
+          'aria-label': '返回首页',
+          html: icons.back,
+          onClick: () => {
+            state.tab = 'home';
+            render();
+          },
+        })
+      : h('span', { className: 'appbar-side' });
   const top =
     state.tab === 'home'
       ? null
       : h('div', { className: 'top appbar' }, [
-          h('span', { className: 'appbar-side' }),
+          back,
           h('h1', { text: titles[state.tab] || 'LuckyTodo' }),
           h('span', { className: 'appbar-side' }),
         ]);
@@ -3792,18 +3509,35 @@ async function render() {
   root.innerHTML = '';
   root.append(h('div', { id: 'toast', className: 'toast', role: 'status' }));
   let view;
-  if (state.screen === 'cloud-login') view = renderCloudLogin();
-  else if (state.screen === 'cloud-register') view = renderCloudRegister();
-  else if (state.screen === 'family-gate') view = renderFamilyGate();
-  else if (state.screen === 'local-register') view = renderLocalRegister();
-  else if (state.screen === 'local-login') view = renderLocalLogin();
-  else if (state.screen === 'connect') view = renderConnect();
-  else if (state.screen === 'setup') view = renderSetup();
-  else if (state.screen === 'family-login') view = renderFamilyLogin();
-  else if (state.screen === 'merge') view = renderMerge();
-  else if (state.screen === 'plan-detail') view = await renderPlanDetail();
-  else view = await renderHome();
-  root.append(view);
+  try {
+    if (state.screen === 'cloud-login') view = renderCloudLogin();
+    else if (state.screen === 'cloud-register') view = renderCloudRegister();
+    else if (state.screen === 'family-gate') view = renderFamilyGate();
+    else if (state.screen === 'local-register') view = renderLocalRegister();
+    else if (state.screen === 'local-login') view = renderLocalLogin();
+    else if (state.screen === 'connect') view = renderConnect();
+    else if (state.screen === 'setup') view = renderSetup();
+    else if (state.screen === 'family-login') view = renderFamilyLogin();
+    else if (state.screen === 'merge') view = renderMerge();
+    else if (state.screen === 'plan-detail') view = await renderPlanDetail();
+    else view = await renderHome();
+    root.append(view);
+  } catch (e) {
+    console.error('[LuckyTodo] render failed', e);
+    root.append(
+      h('div', { className: 'cloud-auth' }, [
+        h('div', { className: 'cloud-card' }, [
+          h('h2', { text: '页面加载失败' }),
+          h('p', { className: 'lead', text: e.message || '请刷新重试' }),
+          h('button', {
+            className: 'btn',
+            text: '重新加载',
+            onClick: () => location.reload(),
+          }),
+        ]),
+      ])
+    );
+  }
   const focusEl = root.querySelector('.form-screen input, .form-screen textarea, .sheet .menu-item, .cloud-card input');
   if (focusEl && focusEl.tagName !== 'BUTTON') setTimeout(() => focusEl.focus(), 50);
   const calPage = root.querySelector('.cal-page');

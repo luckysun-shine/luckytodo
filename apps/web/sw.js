@@ -1,5 +1,5 @@
 /* LuckyTodo service worker — cache shell for offline launch */
-const CACHE = 'luckytodo-shell-v1';
+const CACHE = 'luckytodo-shell-v20261003b';
 const SHELL = [
   './',
   './index.html',
@@ -11,6 +11,7 @@ const SHELL = [
   './src/native.js',
   './public/manifest.webmanifest',
   './public/logo.png',
+  './public/logo-horizontal.png',
   './public/icon-192.png',
   './public/icon-512.png',
   './public/favicon.png',
@@ -28,9 +29,10 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
@@ -41,6 +43,29 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   // Never cache API
   if (url.pathname.startsWith('/api/')) return;
+
+  // JS/HTML/CSS: network-first so updates aren't stuck behind stale shell cache
+  const path = url.pathname;
+  const networkFirst =
+    path.endsWith('.js') ||
+    path.endsWith('.html') ||
+    path.endsWith('/') ||
+    path.endsWith('index.html');
+
+  if (networkFirst) {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.ok && res.type === 'basic') {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(req))
+    );
+    return;
+  }
 
   event.respondWith(
     caches.match(req).then((cached) => {

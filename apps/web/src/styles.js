@@ -618,25 +618,49 @@ button { cursor: pointer; }
 .tabs {
   position: absolute;
   left: 0; right: 0; bottom: 0;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr) 72px;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-content: space-between;
   gap: 0;
-  padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+  /* 右侧给 FAB 留空，强制单行五栏 */
+  padding: 4px 64px 4px 2px;
+  padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  height: calc(64px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  overflow: hidden;
   border-radius: 28px 28px 0 0;
   background: var(--nav);
   border: 0;
   border-top: 1px solid var(--line);
   box-shadow: 0 -12px 32px rgba(20, 24, 40, 0.06);
-  backdrop-filter: none;
+  z-index: 5;
 }
 .tabs button {
   border: 0; background: transparent; color: var(--muted);
-  min-height: 56px; border-radius: 16px;
-  display: grid; place-items: center; gap: 2px;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
+  min-height: 52px;
+  height: 52px;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 0;
   font-size: 0.68rem; font-weight: 700;
+  line-height: 1.1;
   transition: color .18s var(--ease);
 }
-.tabs button svg { width: 22px; height: 22px; }
+.tabs button svg { width: 22px; height: 22px; flex: none; }
+.tabs button span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .tabs button.active {
   color: var(--accent-strong);
   background: transparent;
@@ -647,18 +671,18 @@ button { cursor: pointer; }
 .fab {
   position: absolute;
   left: auto;
-  right: 14px;
-  bottom: calc(16px + env(safe-area-inset-bottom));
+  right: 12px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
   transform: none;
-  width: 56px; height: 56px; border: 0; border-radius: 18px;
-  background: var(--accent); color: #07323c;
+  width: 48px; height: 48px; border: 0; border-radius: 16px;
+  background: var(--accent); color: var(--on-accent);
   display: grid; place-items: center;
   box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 45%, transparent);
   z-index: 6;
   transition: filter .18s var(--ease), transform .18s var(--ease);
 }
 .fab:active { transform: scale(0.96); filter: brightness(0.96); }
-.fab svg { width: 28px; height: 28px; stroke: #07323c; }
+.fab svg { width: 24px; height: 24px; stroke: var(--on-accent); }
 
 .toast {
   position: absolute;
@@ -1237,21 +1261,22 @@ button { cursor: pointer; }
 .prio-low { background: var(--prio-low); }
 
 /* v005 cloud + Figma family UI */
-.tabs { gap: 0; padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); }
-.tabs button {
-  flex: 1; min-width: 0; padding: 6px 2px;
-  font-size: 0.62rem; gap: 2px;
-}
-.tabs button svg { width: 20px; height: 20px; }
 .cloud-auth {
   min-height: 100%; padding: 24px 20px 40px;
   background: linear-gradient(180deg, #eef8f6 0%, var(--bg) 42%);
   display: flex; flex-direction: column; gap: 18px;
 }
-.cloud-brand { text-align: center; padding-top: 12px; }
-.cloud-brand img {
-  width: 72px; height: 72px; border-radius: 18px;
+.cloud-brand { text-align: center; padding-top: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.cloud-brand .brand-mark {
+  width: 88px; height: 88px; border-radius: 22px;
+  object-fit: cover;
+  background: #fff;
   box-shadow: var(--shadow);
+}
+.cloud-brand .brand-wordmark {
+  width: min(240px, 72vw); height: auto;
+  object-fit: contain;
+  margin-top: 8px;
 }
 .cloud-brand h1 { margin: 12px 0 4px; font-size: 1.6rem; font-weight: 800; }
 .cloud-brand p { margin: 0; color: var(--muted); font-size: 0.9rem; }
