@@ -78,6 +78,15 @@ CREATE TABLE IF NOT EXISTS otp_codes (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS password_resets (
+  phone TEXT PRIMARY KEY,
+  code_hash TEXT,
+  expires_at TEXT,
+  sent_at TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  locked_until TEXT
+);
+
 CREATE TABLE IF NOT EXISTS push_tokens (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

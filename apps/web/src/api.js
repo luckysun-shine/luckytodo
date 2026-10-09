@@ -32,11 +32,14 @@ export function getToken() {
 }
 
 /** Authenticated media URL for <img src> (token in query). */
-export function mediaUrl(id) {
+export function mediaUrl(id, version) {
   if (!id) return '';
+  const params = new URLSearchParams();
   const t = getToken();
-  const q = t ? `?token=${encodeURIComponent(t)}` : '';
-  return `${apiBase()}/api/media/${encodeURIComponent(id)}${q}`;
+  if (t) params.set('token', t);
+  if (version) params.set('v', String(version));
+  const q = params.toString();
+  return `${apiBase()}/api/media/${encodeURIComponent(id)}${q ? `?${q}` : ''}`;
 }
 
 export function getMode() {
@@ -247,6 +250,22 @@ export async function login({ phone, password, username }) {
   });
   setSession(session);
   return session;
+}
+
+export async function changePassword({ currentPassword, password }) {
+  return api('POST', '/api/auth/password/change', { body: { currentPassword, password } });
+}
+
+export async function requestPasswordReset(phone) {
+  return api('POST', '/api/auth/password/forgot', { token: '', body: { phone } });
+}
+
+export async function confirmPasswordReset({ phone, code, password }) {
+  return api('POST', '/api/auth/password/reset', { token: '', body: { phone, code, password } });
+}
+
+export async function resetMemberPassword(memberId, password) {
+  return api('PATCH', `/api/members/${memberId}`, { body: { password } });
 }
 
 export async function otpSend(phone) {

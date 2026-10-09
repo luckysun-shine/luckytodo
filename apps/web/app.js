@@ -1,5 +1,5 @@
-import { css } from './src/styles.js?v=20261009k';
-import * as api from './src/api.js?v=20261009d';
+import { css } from './src/styles.js?v=20261009v';
+import * as api from './src/api.js?v=20261009u';
 import * as db from './src/db.js?v=20261009d';
 import * as reminders from './src/reminders.js?v=20261009d';
 import * as native from './src/native.js?v=20261009d';
@@ -313,16 +313,6 @@ function canonicalTab(tab) {
   return tab || 'home';
 }
 
-function addButton() {
-  return h('button', {
-    type: 'button',
-    className: 'icon-btn add-btn',
-    'aria-label': '添加',
-    html: icons.plus,
-    onClick: openCreateSheet,
-  });
-}
-
 function visibilityLabel(v) {
   return { self: '仅自己', members: '指定成员', family: '全家' }[v] || '';
 }
@@ -438,8 +428,8 @@ function authHero({ title, lead }) {
   ]);
 }
 
-function authPasswordField(label, { autocomplete = 'current-password', hint } = {}) {
-  const input = h('input', { type: 'password', autocomplete });
+function authPasswordField(label, { autocomplete = 'current-password', hint, value = '' } = {}) {
+  const input = h('input', { type: 'password', autocomplete, value, maxlength: '64' });
   let shown = false;
   const eye = h('button', {
     type: 'button',
@@ -533,6 +523,7 @@ function renderCloudLogin() {
       h('p', { text: '把小日子，安排得刚刚好' }),
     ]),
     h('div', { className: 'cloud-card' }, [
+      serverAddressButton(),
       h('h2', { text: '欢迎回来' }),
       h('p', { className: 'lead', text: '使用手机号和密码登录，和家人一起开启有序的一天。' }),
       fieldEl('手机号', phone),
@@ -542,7 +533,7 @@ function renderCloudLogin() {
         className: 'link',
         text: '忘记密码？',
         style: 'align-self:flex-start;border:0;background:transparent;color:var(--accent-strong);font-weight:700',
-        onClick: () => toast('请联系家庭管理员协助重置，或重新注册后加入家庭'),
+        onClick: openForgotPassword,
       }),
       h('label', { className: 'legal-row' }, [
         agreed,
@@ -568,6 +559,164 @@ function renderCloudLogin() {
   ]);
 }
 
+function openForgotPassword() {
+  state.screen = 'cloud-forgot';
+  state.smsReset = 'loading';
+  state.resetDraft = { phone: '', code: '', password: '', password2: '' };
+  state.resetSentAt = 0;
+  render();
+  api.health()
+    .then((health) => {
+      if (state.screen !== 'cloud-forgot') return;
+      state.smsReset = !!health.smsReset;
+      render();
+    })
+    .catch(() => {
+      if (state.screen !== 'cloud-forgot') return;
+      state.smsReset = 'error';
+      render();
+    });
+}
+
+function renderCloudForgot() {
+  const back = h('button', {
+    type: 'button',
+    className: 'link',
+    text: '返回登录',
+    style: 'align-self:flex-start;border:0;background:transparent;color:var(--accent-strong);font-weight:700',
+    onClick: () => {
+      state.screen = 'cloud-login';
+      state.resetDraft = null;
+      render();
+    },
+  });
+  if (state.smsReset === 'loading') {
+    return h('div', { className: 'cloud-auth' }, [
+      h('div', { className: 'cloud-card' }, [
+        h('h2', { text: '找回密码' }),
+        h('p', { className: 'lead', text: '正在确认这台服务器是否可以发送短信。' }),
+        back,
+      ]),
+    ]);
+  }
+  if (state.smsReset === 'error') {
+    return h('div', { className: 'cloud-auth' }, [
+      h('div', { className: 'cloud-card' }, [
+        h('h2', { text: '找回密码' }),
+        h('p', { className: 'lead', text: '连不上这台服务器，请稍后再试。' }),
+        back,
+      ]),
+    ]);
+  }
+  if (!state.smsReset) {
+    return h('div', { className: 'cloud-auth' }, [
+      h('div', { className: 'cloud-card' }, [
+        h('h2', { text: '找回密码' }),
+        h('p', {
+          className: 'lead',
+          text: '这台服务器未开启短信，请让家庭管理员或家长重置密码。',
+        }),
+        back,
+      ]),
+    ]);
+  }
+  const draft = state.resetDraft || { phone: '', code: '', password: '', password2: '' };
+  const phone = h('input', {
+    type: 'tel',
+    inputmode: 'numeric',
+    placeholder: '请输入手机号',
+    autocomplete: 'tel',
+    maxlength: '11',
+    value: draft.phone,
+  });
+  const code = h('input', {
+    inputmode: 'numeric',
+    placeholder: '6 位验证码',
+    autocomplete: 'one-time-code',
+    maxlength: '6',
+    value: draft.code,
+  });
+  const pass = authPasswordField('新密码', { autocomplete: 'new-password', value: draft.password });
+  const pass2 = authPasswordField('确认密码', { autocomplete: 'new-password', value: draft.password2 });
+  const remember = () => {
+    state.resetDraft = {
+      phone: phone.value,
+      code: code.value,
+      password: pass.input.value,
+      password2: pass2.input.value,
+    };
+  };
+  phone.addEventListener('input', remember);
+  code.addEventListener('input', remember);
+  pass.input.addEventListener('input', remember);
+  pass2.input.addEventListener('input', remember);
+  const cooling = state.resetSentAt && Date.now() - state.resetSentAt < 60000;
+  const sendBtn = h('button', {
+    type: 'button',
+    className: 'btn secondary',
+    text: cooling ? '已发送' : '获取验证码',
+    disabled: !!cooling,
+    onClick: async () => {
+      remember();
+      const value = phone.value.trim();
+      if (!/^1\d{10}$/.test(value)) return toast('请输入有效手机号');
+      sendBtn.disabled = true;
+      sendBtn.textContent = '发送中…';
+      try {
+        const res = await api.requestPasswordReset(value);
+        state.resetSentAt = Date.now();
+        sendBtn.textContent = '已发送';
+        toast(res.message || '若该号码已注册，验证码已发送');
+        setTimeout(() => {
+          if (state.screen !== 'cloud-forgot') return;
+          render();
+        }, 60000);
+      } catch (e) {
+        sendBtn.disabled = false;
+        sendBtn.textContent = '获取验证码';
+        toast(e.message);
+      }
+    },
+  });
+  return h('div', { className: 'cloud-auth' }, [
+    h('div', { className: 'cloud-card' }, [
+      h('h2', { text: '找回密码' }),
+      h('p', { className: 'lead', text: '验证码会发到这个手机号，10 分钟内有效。' }),
+      fieldEl('手机号', phone),
+      fieldEl('验证码', code),
+      sendBtn,
+      pass.el,
+      pass2.el,
+      h('button', {
+        className: 'btn',
+        text: '重置密码',
+        onClick: async (e) => {
+          remember();
+          const value = phone.value.trim();
+          const next = pass.input.value;
+          if (!/^1\d{10}$/.test(value)) return toast('请输入有效手机号');
+          if (!/^\d{6}$/.test(code.value.trim())) return toast('请输入 6 位验证码');
+          if (next.length < 6 || next.length > 64) return toast('密码需 6–64 位');
+          if (next !== pass2.input.value) return toast('两次密码不一致');
+          const btn = e.currentTarget;
+          btn.disabled = true;
+          try {
+            await api.confirmPasswordReset({ phone: value, code: code.value.trim(), password: next });
+            state.screen = 'cloud-login';
+            state.resetDraft = null;
+            toast('密码已重置，请登录');
+            render();
+          } catch (err) {
+            btn.disabled = false;
+            toast(err.message);
+          }
+        },
+      }),
+      back,
+    ]),
+  ]);
+}
+
 function renderCloudRegister() {
   const name = h('input', { placeholder: '怎么称呼你', maxlength: '20', autocomplete: 'nickname' });
   const phone = h('input', { type: 'tel', placeholder: '请输入手机号', maxlength: '11' });
@@ -584,6 +733,7 @@ function renderCloudRegister() {
       h('p', { text: '注册后即可创建或加入家庭' }),
     ]),
     h('div', { className: 'cloud-card' }, [
+      serverAddressButton(),
       fieldEl('显示名', name),
       fieldEl('手机号', phone),
       pass.el,
@@ -832,7 +982,11 @@ function renderLocalLogin() {
       title: '登录',
       lead: '登录本机账号，继续管理待办、日程与家庭计划。',
     }),
-    panel: [user.el, pass.el],
+    panel: [
+      user.el,
+      pass.el,
+      h('p', { className: 'muted', text: '本机账号的密码只保存在这台设备上，忘记后无法远程找回。' }),
+    ],
     cta: [
       submit,
       h('p', { className: 'auth-switch' }, [
@@ -1018,7 +1172,11 @@ function renderFamilyLogin() {
         ? `登录家庭账号后即可同步。服务器 ${api.apiBase().replace(/^https?:\/\//, '')}`
         : '登录后可与家人关联，并在联网时自动同步。',
     }),
-    panel: [user.el, pass.el],
+    panel: [
+      user.el,
+      pass.el,
+      h('p', { className: 'muted', text: '儿童账号忘记密码时，请让家庭管理员或家长重置。' }),
+    ],
     cta: [submit],
   });
 }
@@ -1066,33 +1224,35 @@ function renderMerge() {
   });
 }
 
+function tabItem(id, label, icon) {
+  const active = state.tab === id;
+  return h('button', {
+    type: 'button',
+    className: active ? 'active' : '',
+    role: 'tab',
+    'aria-selected': active ? 'true' : 'false',
+    html: `${icon}<span>${label}</span>`,
+    onClick: () => {
+      state.screen = 'home';
+      state.planId = null;
+      state.tab = id;
+      render();
+    },
+  });
+}
+
 function tabs() {
-  const items = [
-    ['home', '首页', icons.home],
-    ['todo', '待办', icons.todo],
-    ['plans', '计划', icons.plans],
-    ['cal', '日历', icons.cal],
-    ['notes', '便签', icons.notes],
-    ['family', '家庭', icons.family],
-  ];
-  return h(
-    'nav',
-    { className: 'tabs', role: 'tablist', 'aria-label': '主导航' },
-    items.map((item) => {
-      const [id, label, icon] = item;
-      const active = state.tab === id;
-      return h('button', {
-        className: active ? 'active' : '',
-        role: 'tab',
-        'aria-selected': active,
-        html: `${icon}<span>${label}</span>`,
-        onClick: () => {
-          state.tab = id;
-          render();
-        },
-      });
-    })
-  );
+  return h('nav', { className: 'tabs', role: 'tablist', 'aria-label': '主导航' }, [
+    tabItem('home', '首页', icons.home),
+    h('button', {
+      type: 'button',
+      className: 'tab-add',
+      'aria-label': '添加',
+      html: icons.plus,
+      onClick: openCreateSheet,
+    }),
+    tabItem('cal', '日历', icons.cal),
+  ]);
 }
 
 function offlineBanner() {
@@ -1145,7 +1305,23 @@ const TILE_TONES = ['green', 'red', 'teal'];
 const PRIO_LABEL = { high: '高', medium: '中', low: '低' };
 
 function memberAvatarUrl(m) {
-  return m?.avatarMediaId ? api.mediaUrl(m.avatarMediaId) : '';
+  if (state.avatarPreview && m?.id && m.id === state.avatarPreview.memberId) return state.avatarPreview.url;
+  return m?.avatarMediaId ? api.mediaUrl(m.avatarMediaId, m.avatarUpdatedAt) : '';
+}
+
+function rememberAvatar(memberId, mediaId, updatedAt) {
+  const me = api.getMember();
+  if (me?.id === memberId) {
+    localStorage.setItem(
+      'lt_member',
+      JSON.stringify({ ...me, avatarMediaId: mediaId, avatarUpdatedAt: updatedAt })
+    );
+  }
+  const hit = (state.members || []).find((m) => m.id === memberId);
+  if (hit) {
+    hit.avatarMediaId = mediaId;
+    hit.avatarUpdatedAt = updatedAt;
+  }
 }
 
 function profileEntryButton(className = 'home-avatar') {
@@ -1158,8 +1334,11 @@ function profileEntryButton(className = 'home-avatar') {
     {
       type: 'button',
       className,
-      'aria-label': '家庭',
+      'aria-label': '我的',
       onClick: () => {
+        state.form = null;
+        state.overlay = null;
+        state.mePage = null;
         state.screen = 'home';
         state.tab = 'family';
         state.planId = null;
@@ -1178,7 +1357,7 @@ function loadOrientedBitmap(file) {
 
 function openAvatarCrop(file) {
   const view = 280;
-  return loadOrientedBitmap(file).then((bmp) => new Promise((resolve) => {
+  return loadOrientedBitmap(file).then((bmp) => new Promise((resolve, reject) => {
     const norm = document.createElement('canvas');
     norm.width = bmp.width;
     norm.height = bmp.height;
@@ -1197,11 +1376,13 @@ function openAvatarCrop(file) {
       'aria-label': '缩放',
     });
     const overlay = h('div', { className: 'crop-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '调整头像' }, [
-      h('p', { className: 'crop-tip', text: '拖动照片，让人脸落在圆里' }),
-      frame,
-      h('label', { className: 'crop-zoom' }, [
-        h('span', { text: '缩放' }),
-        zoom,
+      h('div', { className: 'crop-stage' }, [
+        h('p', { className: 'crop-tip', text: '拖动照片，让人脸落在圆里' }),
+        frame,
+        h('label', { className: 'crop-zoom' }, [
+          h('span', { text: '缩放' }),
+          zoom,
+        ]),
       ]),
       h('div', { className: 'crop-actions' }, [
         h('button', {
@@ -1212,7 +1393,7 @@ function openAvatarCrop(file) {
         }),
         h('button', {
           type: 'button',
-          className: 'btn',
+          className: 'btn crop-use',
           text: '使用这张',
           onClick: () => finish(exportCircle()),
         }),
@@ -1254,11 +1435,16 @@ function openAvatarCrop(file) {
       ctx.arc(out / 2, out / 2, out / 2, 0, Math.PI * 2);
       ctx.clip();
       ctx.drawImage(norm, (out - dw) / 2 + ox * k, (out - dh) / 2 + oy * k, dw, dh);
-      return new Promise((res) => canvas.toBlob((blob) => res(blob), 'image/jpeg', 0.92));
+      return new Promise((res, rej) => {
+        canvas.toBlob((blob) => {
+          if (!blob) rej(new Error('这张照片处理失败，请换一张'));
+          else res(blob);
+        }, 'image/jpeg', 0.92);
+      });
     }
     function finish(result) {
       overlay.remove();
-      Promise.resolve(result).then(resolve);
+      Promise.resolve(result).then(resolve, reject);
     }
 
     zoom.addEventListener('input', () => {
@@ -1323,14 +1509,28 @@ function avatarButton(person, { size = 64, editable = false, ariaLabel = '头像
       try {
         const blob = await openAvatarCrop(fl);
         if (!blob) return;
+        const preview = URL.createObjectURL(blob);
+        if (state.avatarPreview?.url) URL.revokeObjectURL(state.avatarPreview.url);
+        state.avatarPreview = { memberId: person.id, url: preview };
+        await render();
         const cropped = new File([blob], 'avatar.jpg', { type: 'image/jpeg' });
-        await api.uploadMedia(cropped, { purpose: 'avatar', memberId: person.id });
-        await api.fetchMe();
-        await loadMembers();
-        toast('头像已更新');
+        const media = await api.uploadMedia(cropped, { purpose: 'avatar', memberId: person.id });
+        if (media?.id && !media.pending) {
+          await api.fetchMe();
+          await loadMembers();
+          if (api.getMember()?.avatarMediaId !== media.id) {
+            rememberAvatar(person.id, media.id, new Date().toISOString());
+          }
+          state.avatarPreview = null;
+          URL.revokeObjectURL(preview);
+          toast('头像已更新');
+        } else {
+          toast('网络不稳，头像先显示在这台设备上');
+        }
         render();
       } catch (e) {
         toast(e.message || '头像处理失败');
+        render();
       }
     });
     return h('div', { style: 'display:inline-grid;justify-items:center' }, [btn, file]);
@@ -2183,14 +2383,17 @@ async function renderPlanDetail() {
         },
       }),
       h('h1', { text: plan.payload.title }),
-      me?.role === 'child'
-        ? h('span', { className: 'appbar-side' })
-        : h('button', {
-            type: 'button',
-            className: 'btn ghost',
-            text: '编辑',
-            onClick: () => openPlanEditor(plan),
-          }),
+      h('div', { className: 'appbar-tools' }, [
+        me?.role === 'child'
+          ? null
+          : h('button', {
+              type: 'button',
+              className: 'btn ghost',
+              text: '编辑',
+              onClick: () => openPlanEditor(plan),
+            }),
+        profileEntryButton(),
+      ]),
     ]),
     h('div', { className: 'scroller' }, [
       h('div', { className: 'card' }, [
@@ -2962,7 +3165,7 @@ function formShell(title, bodyNodes, onSave, saveLabel) {
         },
       }),
       h('h1', { text: title }),
-      h('span', { className: 'appbar-side' }),
+      profileEntryButton(),
     ]),
     h('div', { className: 'scroller' }, [
       ...bodyNodes,
@@ -3669,10 +3872,7 @@ async function renderHomeBody() {
           h('h1', { text: `你好，${name}` }),
           h('p', { className: 'home-sub', text: `${fmtDateNice()} · 把小日子安排得刚刚好` }),
         ]),
-        h('div', { className: 'home-hero-tools' }, [
-          addButton(),
-          profileEntryButton(),
-        ]),
+        h('div', { className: 'home-hero-tools' }, [profileEntryButton()]),
       ]),
       h('div', { className: 'home-search' }, [
         h('span', { html: icons.search, 'aria-hidden': 'true' }),
@@ -3882,7 +4082,7 @@ async function renderHomeBody() {
     ])
   );
   if (!noteList.length) {
-    appendNodes(wrap, h('p', { className: 'muted', text: '还没有便签，可在底栏「便签」页记录灵感。' }));
+    appendNodes(wrap, h('p', { className: 'muted', text: '还没有便签。点「全部」可以记下灵感。' }));
   } else {
     const rail = h('div', { className: 'note-rail' });
     for (const n of noteList) {
@@ -4061,209 +4261,618 @@ async function renderNotesBody() {
   return wrap;
 }
 
-async function renderMeBody() {
-  const family = api.getFamily();
-  const me = api.getMember();
-  const user = api.getUser();
-  await loadMembers();
-  const members = state.members.filter((m) => !m.disabled);
-  const todos = await listActive('todo');
-  const shared = todos.filter((t) => (t.payload.assigneeIds || []).length > 1 || (t.payload.assigneeIds || [])[0] !== me?.id);
-  const checkins = await listActive('checkin');
-  const notes = await listActive('note');
-  const activity = [];
-  for (const c of checkins.slice(0, 8)) {
-    if (c.payload.status === 'done') {
-      const who = state.members.find((m) => m.id === c.payload.memberId);
-      activity.push(`${who?.displayName || '成员'} 完成了打卡`);
+const AI_PRESETS = [
+  { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  { id: 'minimax', label: 'MiniMax', baseUrl: 'https://api.minimaxi.com/v1', model: 'MiniMax-M2' },
+  { id: 'custom', label: '自定义', baseUrl: '', model: '' },
+];
+
+function presetFor(baseUrl) {
+  const u = String(baseUrl || '').replace(/\/$/, '');
+  if (u.includes('deepseek.com')) return 'deepseek';
+  if (u.includes('minimax')) return 'minimax';
+  return 'custom';
+}
+
+function serverHostLabel() {
+  try {
+    return new URL(api.apiBase()).host;
+  } catch {
+    return api.apiBase();
+  }
+}
+
+function serverAddressButton() {
+  return h('button', {
+    type: 'button',
+    className: 'server-row',
+    onClick: () => {
+      state.overlay = { kind: 'server', loggedIn: !!api.getToken() };
+      render();
+    },
+  }, [
+    h('span', { text: '服务器' }),
+    h('strong', { text: serverHostLabel() }),
+    h('span', { className: 'chev', text: '›' }),
+  ]);
+}
+
+async function probeServer(raw) {
+  const val = String(raw || '').trim().replace(/\/$/, '');
+  if (!/^https?:\/\//i.test(val)) throw new Error('地址需要以 http:// 或 https:// 开头');
+  let url;
+  try {
+    url = new URL(val);
+  } catch {
+    throw new Error('地址格式不正确');
+  }
+  const host = url.hostname;
+  const local =
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host.endsWith('.local') ||
+    /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host);
+  if (url.protocol !== 'https:' && !local) throw new Error('公网地址请使用 HTTPS');
+  let health;
+  try {
+    const res = await fetch(`${val}/api/health`);
+    health = await res.json();
+    if (!res.ok) throw new Error(health.error || '连不上这台服务器');
+  } catch (e) {
+    if (e.message && e.message !== 'Failed to fetch') throw e;
+    throw new Error('连不上这台服务器，请检查地址与网络');
+  }
+  return { val, health };
+}
+
+function applyServer(val, loggedIn) {
+  api.setApiBase(val);
+  state.overlay = null;
+  state.aiDraft = null;
+  state.aiSettings = null;
+  state.aiGlance = undefined;
+  if (loggedIn) {
+    api.logout();
+    state.screen = 'cloud-login';
+    state.mePage = null;
+    toast('已切换服务器，请重新登录');
+  } else {
+    toast('已连接这台服务器');
+  }
+  render();
+}
+
+function renderServerOverlay() {
+  const loggedIn = !!state.overlay?.loggedIn;
+  const input = h('input', {
+    type: 'url',
+    value: api.apiBase(),
+    placeholder: 'https://你的域名或IP:端口',
+    autocomplete: 'url',
+  });
+  return h('div', {
+    className: 'modal',
+    role: 'presentation',
+    onClick: (e) => {
+      if (e.target === e.currentTarget) closeOverlay();
+    },
+  }, [
+    h('div', { className: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': '服务器地址' }, [
+      h('div', { className: 'handle', 'aria-hidden': 'true' }),
+      h('h2', { text: '连接 NAS' }),
+      h('p', { className: 'muted', text: '填写这台 NAS 上 LuckyTodo 的网页访问地址，和飞牛里填写服务地址一样。' }),
+      fieldEl('访问地址', input),
+      h('div', { className: 'sheet-actions' }, [
+        h('button', { type: 'button', className: 'btn secondary', text: '取消', onClick: closeOverlay }),
+        h('button', {
+          type: 'button',
+          className: 'btn',
+          text: '检查并连接',
+          onClick: async (e) => {
+            const btn = e.currentTarget;
+            btn.disabled = true;
+            btn.textContent = '连接中…';
+            try {
+              const { val } = await probeServer(input.value);
+              if (loggedIn && val !== api.apiBase()) {
+                state.overlay = null;
+                askConfirm({
+                  title: '更换服务器',
+                  body: '更换后会退出当前登录，再用新地址上的账号进入。',
+                  confirmLabel: '更换',
+                  onConfirm: () => applyServer(val, true),
+                });
+                return;
+              }
+              applyServer(val, false);
+            } catch (err) {
+              btn.disabled = false;
+              btn.textContent = '检查并连接';
+              toast(err.message);
+            }
+          },
+        }),
+      ]),
+    ]),
+  ]);
+}
+
+function renderInviteOverlay() {
+  const code = state.overlay?.code || '';
+  return h('div', {
+    className: 'modal',
+    role: 'presentation',
+    onClick: (e) => {
+      if (e.target === e.currentTarget) closeOverlay();
+    },
+  }, [
+    h('div', { className: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': '邀请成员' }, [
+      h('div', { className: 'handle', 'aria-hidden': 'true' }),
+      h('h2', { text: '邀请成员' }),
+      h('p', { className: 'muted', text: code ? '把邀请码发给家人，对方在加入家庭时填入。' : '正在生成邀请码…' }),
+      code ? h('p', { className: 'invite-code', text: code }) : null,
+      h('div', { className: 'sheet-actions' }, [
+        h('button', { type: 'button', className: 'btn secondary', text: '关闭', onClick: closeOverlay }),
+        h('button', {
+          type: 'button',
+          className: 'btn',
+          text: '复制邀请码',
+          disabled: !code,
+          onClick: async () => {
+            try {
+              await navigator.clipboard.writeText(code);
+              toast('邀请码已复制');
+            } catch {
+              toast(code);
+            }
+          },
+        }),
+      ]),
+    ]),
+  ]);
+}
+
+function settingsRow(label, value, onClick, nav = true) {
+  return h('button', { type: 'button', className: 'settings-row', onClick }, [
+    h('span', { className: 'grow', text: label }),
+    value ? h('span', { className: 'settings-value', text: value }) : null,
+    nav ? h('span', { className: 'chev', text: '›' }) : null,
+  ]);
+}
+
+function insightGlanceText(report) {
+  if (!report) return '尚未生成';
+  if (report.status === 'ok') return report.model || '已更新';
+  return '规则兜底';
+}
+
+async function refreshMeMeta() {
+  const conflicts = await api.listConflicts();
+  state.conflictCount = conflicts.filter((e) => !e.deletedAt).length;
+  if (!api.isFamilyMode()) return;
+  try {
+    const data = await api.api('GET', '/api/insights/latest');
+    state.aiGlance = data.report || null;
+  } catch {
+    state.aiGlance = null;
+  }
+  if (api.getMember()?.role === 'admin') {
+    try {
+      const res = await api.api('GET', '/api/settings/ai');
+      state.aiSettings = res.settings;
+      if (!state.aiDraft) {
+        state.aiDraft = {
+          enabled: !!res.settings.enabled,
+          baseUrl: res.settings.baseUrl || '',
+          model: res.settings.model || '',
+          apiKey: '',
+          preset: presetFor(res.settings.baseUrl),
+        };
+      }
+    } catch {
+      state.aiSettings = null;
     }
   }
-  for (const t of todos.filter((x) => (x.payload.completions || {})[me?.id] === 'done').slice(0, 4)) {
-    activity.push(`完成了「${t.payload.title}」`);
-  }
-  for (const n of notes.slice(0, 3)) {
-    const who = state.members.find((m) => m.id === n.payload.createdBy);
-    activity.push(`${who?.displayName || '家人'} 发布了便签「${n.payload.title}」`);
-  }
+}
 
-  const display = me?.displayName || user?.displayName || '我';
-  const wrap = h('div', { className: 'pad' }, [
-    h('div', { className: 'profile-head', style: 'margin-bottom:16px' }, [
-      avatarButton(me || { displayName: display }, {
-        size: 86,
-        editable: !!(me && api.isFamilyMode()),
-        ariaLabel: '更换头像',
-      }),
-      !api.isFamilyMode()
-        ? h('p', { className: 'muted', style: 'margin:6px 0 0', text: '加入家庭后可设置头像' })
-        : h('p', { className: 'muted', style: 'margin:6px 0 0', text: '点击头像更换照片' }),
-      h('h2', { text: display }),
-      h('p', {
-        text: `${roleLabel(me?.role)} · ${family?.name || '未命名家庭'}${user?.phone ? ` · ${user.phone}` : ''}`,
-      }),
+function canResetMemberPassword(target) {
+  const me = api.getMember();
+  if (!me || !target || me.id === target.id) return false;
+  if (me.role === 'admin') return true;
+  return me.role === 'parent' && target.role === 'child';
+}
+
+function memberLine(m) {
+  const url = memberAvatarUrl(m);
+  return h('div', { className: 'member-line' }, [
+    url
+      ? h('span', { className: 'face' }, [h('img', { src: url, alt: '' })])
+      : h('span', { className: 'face', text: (m.displayName || '?').slice(0, 1) }),
+    h('span', { className: 'grow' }, [
+      h('strong', { text: m.displayName || '成员' }),
+      h('span', { className: 'role', text: roleLabel(m.role) }),
     ]),
-    h('div', { className: 'section-head' }, [
-      h('h2', { text: family?.name ? `${family.name}` : '我的家庭' }),
-      ['admin', 'parent'].includes(me?.role)
-        ? h('button', {
-            type: 'button',
-            className: 'invite-chip',
-            text: '邀请成员',
-            onClick: async () => {
-              try {
-                const r = await api.createInvite('adult');
-                const code = r.invite.code;
-                try {
-                  await navigator.clipboard.writeText(code);
-                } catch {
-                  /* ignore */
-                }
-                toast(`邀请码 ${code} 已复制`);
-              } catch (e) {
-                toast(e.message);
-              }
-            },
-          })
-        : null,
-    ]),
-    h('p', { className: 'eyebrow', text: `家庭成员（${members.length}人）` }),
+    canResetMemberPassword(m)
+      ? h('button', {
+          type: 'button',
+          className: 'text-btn',
+          text: '重置',
+          onClick: () => {
+            state.overlay = { kind: 'reset', memberId: m.id, displayName: m.displayName || '成员' };
+            render();
+          },
+        })
+      : null,
   ]);
+}
 
-  const grid = h('div', { className: 'member-grid' });
-  for (const m of members) {
-    const url = memberAvatarUrl(m);
+async function renderAiSettings() {
+  const me = api.getMember();
+  const isAdmin = me?.role === 'admin';
+  const canRun = ['admin', 'parent'].includes(me?.role);
+  await refreshMeMeta();
+  const report = state.aiGlance;
+  const draft = state.aiDraft || {
+    enabled: false,
+    baseUrl: '',
+    model: '',
+    apiKey: '',
+    preset: 'custom',
+  };
+  state.aiDraft = draft;
+  const wrap = h('div', { className: 'pad' });
+  const meta = report?.generatedAt
+    ? `${insightGlanceText(report)} · ${fmt(report.generatedAt)}`
+    : '还没有洞察。开启后约每 12 小时自动更新。';
+  appendNodes(wrap, h('p', { className: 'muted', text: meta }));
+
+  if (isAdmin) {
+    const base = h('input', { type: 'url', value: draft.baseUrl, placeholder: 'https://api.deepseek.com/v1' });
+    const model = h('input', { value: draft.model, placeholder: 'deepseek-chat' });
+    const key = h('input', {
+      type: 'password',
+      value: draft.apiKey || '',
+      placeholder: state.aiSettings?.apiKeySet ? '已保存密钥，留空不修改' : 'sk-...',
+      autocomplete: 'off',
+    });
+    base.addEventListener('input', () => {
+      draft.baseUrl = base.value;
+      draft.preset = presetFor(base.value);
+    });
+    model.addEventListener('input', () => {
+      draft.model = model.value;
+    });
+    key.addEventListener('input', () => {
+      draft.apiKey = key.value;
+    });
     appendNodes(
-      grid,
-      h('div', { className: 'member-card' }, [
-        url
-          ? h('div', {
-              className: 'face',
-              style: 'margin:0;width:36px;height:36px;overflow:hidden',
-              html: `<img src="${url}" alt="" style="width:100%;height:100%;object-fit:cover">`,
-            })
-          : h('div', {
-              className: 'face',
-              style: 'margin:0;width:36px;height:36px',
-              text: (m.displayName || '?').slice(0, 1),
-            }),
-        h('strong', { text: m.displayName || '成员' }),
-        h('span', { className: 'role', text: roleLabel(m.role) }),
-      ])
+      wrap,
+      h('div', { className: 'settings-group' }, [
+        h('label', { className: 'settings-row' }, [
+          h('span', { className: 'grow' }, [
+            h('strong', { text: '定时洞察' }),
+            h('span', { className: 'role', text: '约每 12 小时自动更新' }),
+          ]),
+          h('input', {
+            type: 'checkbox',
+            checked: !!draft.enabled,
+            onChange: (e) => {
+              draft.enabled = e.target.checked;
+            },
+          }),
+        ]),
+      ]),
+      h('p', { className: 'eyebrow', text: '模型' }),
+      h('div', { className: 'seg' }, AI_PRESETS.map((p) =>
+        h('button', {
+          type: 'button',
+          className: draft.preset === p.id ? 'on' : '',
+          text: p.label,
+          onClick: () => {
+            draft.preset = p.id;
+            if (p.id !== 'custom') {
+              draft.baseUrl = p.baseUrl;
+              draft.model = p.model;
+            }
+            render();
+          },
+        })
+      )),
+      h('div', { className: 'settings-group', style: 'margin-top:12px' }, [
+        fieldEl('接口地址', base),
+        fieldEl('模型名', model),
+        fieldEl('密钥', key),
+      ]),
+      h('button', {
+        className: 'btn block',
+        text: '保存配置',
+        onClick: async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true;
+          try {
+            const res = await api.api('PUT', '/api/settings/ai', {
+              enabled: !!draft.enabled,
+              baseUrl: draft.baseUrl.trim(),
+              model: draft.model.trim(),
+              apiKey: draft.apiKey,
+            });
+            state.aiSettings = res.settings;
+            draft.apiKey = '';
+            draft.baseUrl = res.settings.baseUrl || '';
+            draft.model = res.settings.model || '';
+            draft.enabled = !!res.settings.enabled;
+            draft.preset = presetFor(draft.baseUrl);
+            toast('已保存');
+            render();
+          } catch (err) {
+            btn.disabled = false;
+            toast(err.message);
+          }
+        },
+      })
     );
+  } else {
+    appendNodes(wrap, h('p', { className: 'muted', text: '模型由家庭管理员配置。' }));
   }
-  appendNodes(wrap, grid);
 
-  if (['admin', 'parent'].includes(me?.role)) {
+  if (canRun) {
     appendNodes(
       wrap,
       h('button', {
-        className: 'btn secondary',
-        style: 'margin:14px 0',
-        text: '添加儿童账号',
-        onClick: () => {
-          state.overlay = { kind: 'child' };
-          render();
+        className: 'btn secondary block',
+        style: 'margin-top:12px',
+        text: '立即更新',
+        onClick: async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true;
+          btn.textContent = '更新中…';
+          try {
+            const res = await api.api('POST', '/api/insights/run');
+            state.aiGlance = res.report || null;
+            toast('洞察已更新');
+            render();
+          } catch (err) {
+            btn.disabled = false;
+            btn.textContent = '立即更新';
+            toast(err.message);
+          }
         },
       })
     );
   }
 
-  appendNodes(wrap, h('p', { className: 'eyebrow', text: '共享的家庭任务' }));
-  if (!shared.length) {
-    appendNodes(wrap, h('p', { className: 'muted', text: '暂无多人共享待办。' }));
-  } else {
-    for (const t of shared.slice(0, 8)) {
-      const done = (t.payload.completions || {})[me?.id || 'guest'] === 'done';
-      appendNodes(wrap, todoCard(t, done, me));
+  if (report?.cards?.length) {
+    appendNodes(wrap, h('p', { className: 'eyebrow', text: '最近一次' }));
+    for (const card of report.cards.slice(0, 3)) {
+      appendNodes(
+        wrap,
+        h('div', { className: 'card' }, [
+          h('h3', { text: card.title || '洞察' }),
+          h('p', { className: 'muted', text: card.body || '' }),
+        ])
+      );
     }
   }
+  return wrap;
+}
 
-  appendNodes(wrap, h('p', { className: 'eyebrow', text: '家庭动态简报' }));
-  const act = h('div', { className: 'activity-card' });
-  if (!activity.length) appendNodes(act, h('p', { text: '完成待办或打卡后，这里会出现动态。' }));
-  else for (const line of activity.slice(0, 6)) appendNodes(act, h('p', { text: line }));
-  appendNodes(wrap, act);
+async function renderConflictPage() {
+  const rows = (await api.listConflicts()).filter((e) => !e.deletedAt);
+  const wrap = h('div', { className: 'pad' });
+  if (!rows.length) {
+    appendNodes(wrap, h('p', { className: 'muted', text: '当前没有冲突。' }));
+    return wrap;
+  }
+  for (const row of rows) {
+    appendNodes(
+      wrap,
+      h('div', { className: 'card' }, [
+        h('h3', { text: row.payload?.title || row.entityType }),
+        h('p', { className: 'muted', text: '这条内容和服务器不一致，选择要保留的一份。' }),
+        h('div', { className: 'sheet-actions' }, [
+          h('button', {
+            type: 'button',
+            className: 'btn secondary',
+            text: '保留服务器',
+            onClick: async () => {
+              await api.resolveConflict(row.id, 'server');
+              toast('已保留服务器版本');
+              render();
+            },
+          }),
+          h('button', {
+            type: 'button',
+            className: 'btn',
+            text: '保留我的',
+            onClick: async () => {
+              await api.resolveConflict(row.id, 'mine');
+              toast('已保留我的版本');
+              maybeSync();
+              render();
+            },
+          }),
+        ]),
+      ])
+    );
+  }
+  return wrap;
+}
 
-  appendNodes(
-    wrap,
-    h('div', { className: 'card', style: 'margin-top:16px' }, [
-      h('h3', { text: '设置与数据' }),
-      h('button', {
-        className: 'settings-row',
-        text: '立即同步',
-        onClick: async () => {
-          try {
-            await api.syncNow();
-            toast('已同步');
-          } catch (e) {
-            toast(e.message);
-          }
-        },
+async function renderMeMain() {
+  const family = api.getFamily();
+  const me = api.getMember();
+  const user = api.getUser();
+  await loadMembers();
+  await refreshMeMeta();
+  const members = state.members.filter((m) => !m.disabled);
+  const canManage = ['admin', 'parent'].includes(me?.role);
+  const display = me?.displayName || user?.displayName || '我';
+  const aiValue = me?.role === 'admin'
+    ? state.aiSettings?.model || '未配置'
+    : insightGlanceText(state.aiGlance);
+  const wrap = h('div', { className: 'pad' }, [
+    h('div', { className: 'profile-head', style: 'margin-bottom:18px' }, [
+      avatarButton(me || { displayName: display }, {
+        size: 86,
+        editable: !!(me && api.isFamilyMode()),
+        ariaLabel: '更换头像',
       }),
-      h('button', {
-        className: 'settings-row',
-        text: '导出家庭数据',
-        onClick: async () => {
-          try {
-            const data = await api.exportFamily();
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = `luckytodo-export-${Date.now()}.json`;
-            a.click();
-            toast('已导出');
-          } catch (e) {
-            toast(e.message);
-          }
-        },
+      h('h2', { text: display }),
+      h('p', { className: 'role-pill', text: roleLabel(me?.role) }),
+      h('p', { text: family?.name || '还没有家庭' }),
+      !api.isFamilyMode()
+        ? h('p', { className: 'muted', text: '加入家庭后可设置头像' })
+        : h('p', { className: 'muted', text: '点击头像更换照片' }),
+    ]),
+    h('p', { className: 'eyebrow', text: `家庭 · ${members.length} 人` }),
+    h('div', { className: 'settings-group' }, [
+      ...members.map(memberLine),
+      canManage
+        ? settingsRow('邀请成员', '', () => {
+            state.overlay = { kind: 'invite' };
+            render();
+            api.createInvite('adult').then((r) => {
+              state.overlay = { kind: 'invite', code: r.invite?.code || '' };
+              render();
+            }).catch((e) => {
+              state.overlay = null;
+              toast(e.message);
+              render();
+            });
+          })
+        : null,
+      canManage
+        ? settingsRow('添加儿童', '', () => {
+            state.overlay = { kind: 'child' };
+            render();
+          })
+        : null,
+    ]),
+    h('p', { className: 'eyebrow', text: '设置' }),
+    h('div', { className: 'settings-group' }, [
+      settingsRow('AI 洞察', aiValue, () => {
+        state.mePage = 'ai';
+        render();
       }),
-      h('button', {
-        className: 'settings-row',
-        text: '处理同步冲突',
-        onClick: async () => {
-          const conflicts = await api.listConflicts();
-          if (!conflicts.length) return toast('当前没有冲突');
-          const c = conflicts[0];
-          const keep = confirm(`「${c.payload?.title || c.id}」与服务器冲突。确定=保留服务器，取消=保留我的并强制上传`);
-          await api.resolveConflict(c.id, keep ? 'server' : 'mine');
-          toast('已处理');
-          maybeSync();
-          render();
-        },
+      settingsRow('立即同步', '', async () => {
+        try {
+          await api.syncNow();
+          toast('已同步');
+        } catch (e) {
+          toast(e.message);
+        }
+      }, false),
+      settingsRow('导出数据', '', async () => {
+        try {
+          const data = await api.exportFamily();
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `luckytodo-export-${Date.now()}.json`;
+          a.click();
+          toast('已导出');
+        } catch (e) {
+          toast(e.message);
+        }
+      }, false),
+      settingsRow('同步冲突', state.conflictCount ? String(state.conflictCount) : '', () => {
+        state.mePage = 'conflicts';
+        render();
       }),
-      h('button', {
-        className: 'settings-row',
-        text: '注销账号',
-        onClick: async () => {
-          if (!confirm('确定注销账号？此操作不可恢复。')) return;
-          try {
+      settingsRow('服务器', serverHostLabel(), () => {
+        state.overlay = { kind: 'server', loggedIn: true };
+        render();
+      }),
+    ]),
+    h('div', { className: 'settings-group' }, [
+      api.isCloudLoggedIn()
+        ? settingsRow('修改密码', '', () => {
+            state.mePage = 'password';
+            render();
+          })
+        : null,
+      settingsRow('退出登录', '', () => {
+        askConfirm({
+          title: '退出登录',
+          body: '退出后需要重新登录才能同步。',
+          confirmLabel: '退出',
+          onConfirm: async () => {
+            try {
+              await api.api('POST', '/api/auth/logout');
+            } catch {
+              /* ignore */
+            }
+            api.logout();
+            state.mePage = null;
+            state.screen = 'cloud-login';
+            render();
+          },
+        });
+      }),
+    ]),
+    h('button', {
+      type: 'button',
+      className: 'btn ghost danger-text block',
+      text: '注销账号',
+      onClick: () => {
+        askConfirm({
+          title: '注销账号',
+          body: '注销后无法恢复。',
+          confirmLabel: '注销',
+          onConfirm: async () => {
             await api.deleteAccount();
+            state.mePage = null;
             state.screen = 'cloud-login';
             toast('账号已注销');
             render();
-          } catch (e) {
-            toast(e.message);
-          }
-        },
-      }),
-      h('button', {
-        className: 'settings-row',
-        text: '退出登录',
-        onClick: async () => {
-          try {
-            await api.api('POST', '/api/auth/logout');
-          } catch {
-            /* ignore */
-          }
-          api.logout();
-          state.screen = 'cloud-login';
-          render();
-        },
-      }),
-    ])
-  );
-
+          },
+        });
+      },
+    }),
+  ]);
   return wrap;
+}
+
+function renderPasswordChange() {
+  const current = authPasswordField('当前密码', { autocomplete: 'current-password' });
+  const next = authPasswordField('新密码', { autocomplete: 'new-password', hint: '6–64 位' });
+  const again = authPasswordField('确认密码', { autocomplete: 'new-password' });
+  return h('div', { className: 'pad' }, [
+    h('p', { className: 'muted', text: '修改后，其他设备需要用新密码重新登录。' }),
+    h('div', { className: 'settings-group', style: 'margin-top:12px' }, [
+      current.el,
+      next.el,
+      again.el,
+    ]),
+    h('button', {
+      className: 'btn block',
+      text: '保存新密码',
+      onClick: async (e) => {
+        const password = next.input.value;
+        if (!current.input.value) return toast('请填写当前密码');
+        if (password.length < 6 || password.length > 64) return toast('密码需 6–64 位');
+        if (password !== again.input.value) return toast('两次密码不一致');
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        try {
+          await api.changePassword({ currentPassword: current.input.value, password });
+          state.mePage = null;
+          toast('密码已更新');
+          render();
+        } catch (err) {
+          btn.disabled = false;
+          toast(err.message);
+        }
+      },
+    }),
+  ]);
+}
+
+async function renderMeBody() {
+  if (state.mePage === 'ai') return renderAiSettings();
+  if (state.mePage === 'conflicts') return renderConflictPage();
+  if (state.mePage === 'password') return renderPasswordChange();
+  return renderMeMain();
 }
 
 async function renderHome() {
@@ -4287,25 +4896,42 @@ async function renderHome() {
     insights: renderInsightsBody,
   };
   const body = await (bodyMap[state.tab] || renderHomeBody)();
-  const back =
-    state.tab === 'insights'
-      ? h('button', {
-          className: 'icon-btn',
-          'aria-label': '返回首页',
-          html: icons.back,
-          onClick: () => {
-            state.tab = 'home';
+  const inMeSub = state.tab === 'family' && state.mePage;
+  const rooted = state.tab === 'home' || state.tab === 'cal';
+  const back = rooted
+    ? h('span', { className: 'appbar-side' })
+    : h('button', {
+        className: 'icon-btn',
+        'aria-label': inMeSub ? '返回我的' : '返回首页',
+        html: icons.back,
+        onClick: () => {
+          if (inMeSub) {
+            state.mePage = null;
             render();
-          },
-        })
-      : h('span', { className: 'appbar-side' });
+            return;
+          }
+          state.mePage = null;
+          state.tab = 'home';
+          render();
+        },
+      });
+  const pageTitle =
+    state.tab === 'family'
+      ? state.mePage === 'ai'
+        ? 'AI 洞察'
+        : state.mePage === 'conflicts'
+          ? '同步冲突'
+          : state.mePage === 'password'
+            ? '修改密码'
+            : '我的'
+      : titles[state.tab] || 'LuckyTodo';
   const top =
     state.tab === 'home'
       ? null
       : h('div', { className: 'top appbar' }, [
           back,
-          h('h1', { text: titles[state.tab] || 'LuckyTodo' }),
-          addButton(),
+          h('h1', { text: pageTitle }),
+          profileEntryButton(),
         ]);
 
   return h('div', { className: 'screen' }, [
@@ -4417,9 +5043,71 @@ function renderChildOverlay() {
   );
 }
 
+function renderResetOverlay() {
+  const o = state.overlay;
+  const pass = h('input', {
+    type: 'password',
+    autocomplete: 'new-password',
+    maxlength: '64',
+    placeholder: '至少 6 位',
+  });
+  const pass2 = h('input', {
+    type: 'password',
+    autocomplete: 'new-password',
+    maxlength: '64',
+    placeholder: '再输入一次',
+  });
+  return h(
+    'div',
+    {
+      className: 'modal',
+      role: 'presentation',
+      onClick: (e) => {
+        if (e.target === e.currentTarget) closeOverlay();
+      },
+    },
+    [
+      h('div', { className: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': '重置密码' }, [
+        h('div', { className: 'handle', 'aria-hidden': 'true' }),
+        h('h2', { text: '重置密码' }),
+        h('p', { className: 'muted', text: `为${o.displayName}设置新密码。对方需要重新登录。` }),
+        fieldEl('新密码', pass),
+        fieldEl('确认密码', pass2),
+        h('div', { className: 'sheet-actions' }, [
+          h('button', { type: 'button', className: 'btn secondary', text: '取消', onClick: closeOverlay }),
+          h('button', {
+            type: 'button',
+            className: 'btn',
+            text: '重置',
+            onClick: async (e) => {
+              const password = pass.value;
+              if (password.length < 6 || password.length > 64) return toast('密码需 6–64 位');
+              if (password !== pass2.value) return toast('两次密码不一致');
+              const btn = e.currentTarget;
+              btn.disabled = true;
+              try {
+                await api.resetMemberPassword(o.memberId, password);
+                state.overlay = null;
+                toast('已重置，对方需要用新密码登录');
+                render();
+              } catch (err) {
+                btn.disabled = false;
+                toast(err.message);
+              }
+            },
+          }),
+        ]),
+      ]),
+    ]
+  );
+}
+
 function renderOverlay() {
   if (state.overlay?.kind === 'child') return renderChildOverlay();
+  if (state.overlay?.kind === 'reset') return renderResetOverlay();
   if (state.overlay?.kind === 'confirm') return renderConfirmOverlay();
+  if (state.overlay?.kind === 'invite') return renderInviteOverlay();
+  if (state.overlay?.kind === 'server') return renderServerOverlay();
   return null;
 }
 
@@ -4436,6 +5124,7 @@ async function render() {
   let view;
   try {
     if (state.screen === 'cloud-login') view = renderCloudLogin();
+    else if (state.screen === 'cloud-forgot') view = renderCloudForgot();
     else if (state.screen === 'cloud-register') view = renderCloudRegister();
     else if (state.screen === 'family-gate') view = renderFamilyGate();
     else if (state.screen === 'local-register') view = renderLocalRegister();

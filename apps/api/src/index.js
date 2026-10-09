@@ -21,6 +21,7 @@ import {
   startInsightScheduler,
   buildInsightStats,
 } from './lib/insights.js';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { createServer } from 'node:http';
 import { URL } from 'node:url';
@@ -32,6 +33,10 @@ ensureInsightTables();
 const PORT = Number(process.env.PORT || 8787);
 const MAX_FILE = 20 * 1024 * 1024;
 const OTP_TTL_MS = 10 * 60 * 1000;
+const RESET_TTL_MS = 10 * 60 * 1000;
+const RESET_COOLDOWN_MS = 60 * 1000;
+const RESET_LOCK_MS = 15 * 60 * 1000;
+const RESET_MAX_ATTEMPTS = 5;
 const TEST_OTP = process.env.LUCKYTODO_TEST_OTP || '123456';
 const ALLOWED_IMAGE = new Set([
   'image/jpeg',
@@ -314,6 +319,118 @@ function verifyOtp(phone, code) {
   return ok;
 }
 
+function smsResetEnabled() {
+  return !!String(process.env.LUCKYTODO_SMS_WEBHOOK || '').trim();
+}
+
+function validPassword(password) {
+  const value = String(password || '');
+  return value.length >= 6 && value.length <= 64;
+}
+
+function hashResetCode(phone, code) {
+  return crypto.createHash('sha256').update(`reset:${phone}:${String(code).trim()}`).digest('hex');
+}
+
+function resetCodesMatch(phone, code, stored) {
+  if (!stored) return false;
+  const next = hashResetCode(phone, code);
+  if (stored.length !== next.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(stored, 'hex'), Buffer.from(next, 'hex'));
+}
+
+function savePassword({ userId, memberId, password }) {
+  const hash = hashPassword(password);
+  const t = nowIso();
+  if (userId) {
+    db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(hash, t, userId);
+    const members = db.prepare('SELECT id, family_id FROM members WHERE user_id = ?').all(userId);
+    for (const m of members) {
+      db.prepare('UPDATE members SET password_hash = ?, updated_at = ?, revision = ? WHERE id = ?').run(
+        hash,
+        t,
+        nextRevision(m.family_id),
+        m.id
+      );
+    }
+    if (!members.length && memberId) {
+      const m = db.prepare('SELECT family_id FROM members WHERE id = ?').get(memberId);
+      if (m) {
+        db.prepare('UPDATE members SET password_hash = ?, updated_at = ?, revision = ? WHERE id = ?').run(
+          hash,
+          t,
+          nextRevision(m.family_id),
+          memberId
+        );
+      }
+    }
+    return;
+  }
+  if (!memberId) return;
+  const member = db.prepare('SELECT id, family_id, user_id FROM members WHERE id = ?').get(memberId);
+  if (!member) return;
+  if (member.user_id) {
+    savePassword({ userId: member.user_id, memberId: member.id, password });
+    return;
+  }
+  db.prepare('UPDATE members SET password_hash = ?, updated_at = ?, revision = ? WHERE id = ?').run(
+    hash,
+    t,
+    nextRevision(member.family_id),
+    member.id
+  );
+}
+
+function dropSessions(userId, memberId, keepToken) {
+  if (userId) {
+    if (keepToken) {
+      db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(userId, keepToken);
+    } else {
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+    }
+  }
+  if (memberId) {
+    if (keepToken) {
+      db.prepare('DELETE FROM sessions WHERE member_id = ? AND token != ?').run(memberId, keepToken);
+    } else {
+      db.prepare('DELETE FROM sessions WHERE member_id = ?').run(memberId);
+    }
+  }
+}
+
+function resetRow(phone) {
+  return db.prepare('SELECT * FROM password_resets WHERE phone = ?').get(phone);
+}
+
+function resetLocked(row) {
+  return !!(row?.locked_until && new Date(row.locked_until).getTime() > Date.now());
+}
+
+function reserveResetSend(phone) {
+  const t = nowIso();
+  db.prepare(
+    `INSERT INTO password_resets(phone, code_hash, expires_at, sent_at, attempts, locked_until)
+     VALUES(?, NULL, NULL, ?, 0, NULL)
+     ON CONFLICT(phone) DO UPDATE SET
+       sent_at = excluded.sent_at,
+       code_hash = NULL,
+       expires_at = NULL`
+  ).run(phone, t);
+}
+
+async function deliverResetCode(phone, code, expiresAt) {
+  const hook = String(process.env.LUCKYTODO_SMS_WEBHOOK || '').trim();
+  const res = await fetch(hook, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone, code, expiresAt, purpose: 'password-reset' }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) {
+    throw Object.assign(new Error('验证码发送失败，请稍后再试'), { status: 502 });
+  }
+}
+
 async function handle(req, res) {
   cors(res);
   if (req.method === 'OPTIONS') {
@@ -337,6 +454,7 @@ async function handle(req, res) {
         users: userCount,
         time: nowIso(),
         version: '0.5.0',
+        smsReset: smsResetEnabled(),
         insights: true,
         media: mediaMode(),
       });
@@ -489,6 +607,97 @@ async function handle(req, res) {
         deviceName: body.deviceName,
       });
       return json(res, 200, authPayload(user, member, family, token, expiresAt));
+    }
+
+    if (req.method === 'POST' && pathname === '/api/auth/password/forgot') {
+      const body = await readJson(req);
+      const phone = normalizePhone(body.phone);
+      if (!validPhone(phone)) return json(res, 400, { error: '请输入有效手机号' });
+      if (!smsResetEnabled()) return json(res, 503, { error: '这台服务器未开启短信', smsReset: false });
+      const row = resetRow(phone);
+      if (resetLocked(row)) return json(res, 429, { error: '验证码尝试过多，请稍后再试' });
+      if (row?.sent_at && Date.now() - new Date(row.sent_at).getTime() < RESET_COOLDOWN_MS) {
+        return json(res, 429, { error: '发送太频繁，请稍后再试' });
+      }
+      const user = db.prepare('SELECT id FROM users WHERE phone = ?').get(phone);
+      const previous = row;
+      reserveResetSend(phone);
+      if (user) {
+        const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+        const expiresAt = new Date(Date.now() + RESET_TTL_MS).toISOString();
+        try {
+          await deliverResetCode(phone, code, expiresAt);
+        } catch (err) {
+          if (previous) {
+            db.prepare(
+              'UPDATE password_resets SET sent_at = ?, code_hash = ?, expires_at = ? WHERE phone = ?'
+            ).run(previous.sent_at, previous.code_hash, previous.expires_at, phone);
+          } else {
+            db.prepare('DELETE FROM password_resets WHERE phone = ?').run(phone);
+          }
+          return json(res, err.status || 502, { error: '验证码发送失败，请稍后再试' });
+        }
+        db.prepare(
+          'UPDATE password_resets SET code_hash = ?, expires_at = ?, attempts = 0 WHERE phone = ?'
+        ).run(hashResetCode(phone, code), expiresAt, phone);
+      }
+      return json(res, 200, { ok: true, message: '若该号码已注册，验证码已发送' });
+    }
+
+    if (req.method === 'POST' && pathname === '/api/auth/password/reset') {
+      const body = await readJson(req);
+      const phone = normalizePhone(body.phone);
+      const code = String(body.code || '').trim();
+      const password = String(body.password || '');
+      if (!validPhone(phone)) return json(res, 400, { error: '请输入有效手机号' });
+      if (!validPassword(password)) return json(res, 400, { error: '密码需 6–64 位' });
+      const row = resetRow(phone);
+      if (resetLocked(row)) return json(res, 429, { error: '验证码尝试过多，请稍后再试' });
+      const fresh = !!(row?.code_hash && row.expires_at && new Date(row.expires_at).getTime() >= Date.now());
+      const matched = fresh && resetCodesMatch(phone, code, row.code_hash);
+      if (!matched) {
+        const attempts = (row?.attempts || 0) + 1;
+        if (attempts >= RESET_MAX_ATTEMPTS) {
+          db.prepare(
+            `INSERT INTO password_resets(phone, code_hash, expires_at, sent_at, attempts, locked_until)
+             VALUES(?, NULL, NULL, ?, ?, ?)
+             ON CONFLICT(phone) DO UPDATE SET
+               code_hash = NULL,
+               expires_at = NULL,
+               attempts = excluded.attempts,
+               locked_until = excluded.locked_until`
+          ).run(phone, row?.sent_at || nowIso(), attempts, new Date(Date.now() + RESET_LOCK_MS).toISOString());
+          return json(res, 429, { error: '验证码尝试过多，请稍后再试' });
+        }
+        db.prepare(
+          `INSERT INTO password_resets(phone, code_hash, expires_at, sent_at, attempts, locked_until)
+           VALUES(?, NULL, NULL, ?, ?, NULL)
+           ON CONFLICT(phone) DO UPDATE SET attempts = excluded.attempts`
+        ).run(phone, row?.sent_at || nowIso(), attempts);
+        return json(res, 401, { error: '验证码不正确或已过期' });
+      }
+      const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
+      if (!user) return json(res, 401, { error: '验证码不正确或已过期' });
+      savePassword({ userId: user.id, password });
+      dropSessions(user.id, null, null);
+      db.prepare('DELETE FROM password_resets WHERE phone = ?').run(phone);
+      return json(res, 200, { ok: true });
+    }
+
+    if (req.method === 'POST' && pathname === '/api/auth/password/change') {
+      const auth = getAuth(req);
+      if (!auth?.user?.id) return json(res, 401, { error: '未登录' });
+      const body = await readJson(req);
+      const currentPassword = String(body.currentPassword || '');
+      const password = String(body.password || '');
+      if (!validPassword(password)) return json(res, 400, { error: '密码需 6–64 位' });
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(auth.user.id);
+      if (!user || !verifyPassword(currentPassword, user.password_hash)) {
+        return json(res, 401, { error: '当前密码不正确' });
+      }
+      savePassword({ userId: user.id, memberId: auth.member?.id, password });
+      dropSessions(user.id, auth.member?.id, auth.token);
+      return json(res, 200, { ok: true });
     }
 
     if (req.method === 'POST' && pathname === '/api/auth/logout') {
@@ -820,20 +1029,18 @@ async function handle(req, res) {
       const t = nowIso();
       const revision = nextRevision(auth.familyId);
 
-      if (body.password && auth.member.role === 'admin' && id !== auth.member.id) {
-        if (target.user_id) {
-          db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(
-            hashPassword(body.password),
-            t,
-            target.user_id
-          );
+      if (body.password) {
+        const password = String(body.password);
+        if (!validPassword(password)) return json(res, 400, { error: '密码需 6–64 位' });
+        if (id === auth.member.id) {
+          return json(res, 400, { error: '请在「修改密码」中更换自己的密码' });
         }
-        db.prepare('UPDATE members SET password_hash = ?, updated_at = ?, revision = ? WHERE id = ?').run(
-          hashPassword(body.password),
-          t,
-          revision,
-          id
-        );
+        const allow =
+          auth.member.role === 'admin' ||
+          (auth.member.role === 'parent' && target.role === 'child');
+        if (!allow) return json(res, 403, { error: '无权重置该成员的密码' });
+        savePassword({ userId: target.user_id, memberId: target.id, password });
+        dropSessions(target.user_id, target.id, null);
       }
       if (body.disabled !== undefined && auth.member.role === 'admin') {
         if (id === auth.member.id) return json(res, 400, { error: '不能停用自己' });
