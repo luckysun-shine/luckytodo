@@ -1,4 +1,4 @@
-import { css } from './src/styles.js?v=20261009f';
+import { css } from './src/styles.js?v=20261009k';
 import * as api from './src/api.js?v=20261009d';
 import * as db from './src/db.js?v=20261009d';
 import * as reminders from './src/reminders.js?v=20261009d';
@@ -11,6 +11,8 @@ style.textContent = css;
 document.head.appendChild(style);
 
 const root = document.getElementById('app');
+/** Re-render from a control (选人等) should not jump focus back to the first field. */
+let skipAutoFocus = false;
 /** Bump when replacing brand assets so browsers skip stale cache. */
 const LOGO_VER = '20261009f';
 
@@ -70,19 +72,63 @@ const icons = {
   back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 6l-6 6 6 6"/></svg>',
 };
 
-function toast(msg) {
+function toast(msg, action) {
+  const ms = action?.ms || 2400;
+  state.toastRequest = {
+    msg,
+    label: action?.label || '',
+    onClick: action?.onClick || null,
+    until: Date.now() + ms,
+  };
+  paintToast();
+}
+
+function paintToast() {
   const el = document.getElementById('toast');
+  const req = state.toastRequest;
   if (!el) return;
-  el.textContent = msg;
-  el.classList.add('show');
   clearTimeout(state.toastTimer);
-  state.toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+  if (!req || Date.now() >= req.until) {
+    state.toastRequest = null;
+    el.classList.remove('show');
+    el.replaceChildren();
+    return;
+  }
+  el.replaceChildren(document.createTextNode(req.msg));
+  if (req.label && req.onClick) {
+    el.append(
+      h('button', {
+        type: 'button',
+        className: 'toast-action',
+        text: req.label,
+        onClick: () => {
+          const fn = req.onClick;
+          state.toastRequest = null;
+          el.classList.remove('show');
+          fn();
+        },
+      })
+    );
+  }
+  el.classList.add('show');
+  state.toastTimer = setTimeout(paintToast, Math.max(0, req.until - Date.now()));
+}
+
+async function undoTodo(id, memberId) {
+  const current = await db.getEntity(id);
+  if (!current) return;
+  const completions = { ...(current.payload.completions || {}) };
+  completions[memberId] = 'open';
+  await api.saveLocalEntity('todo', { ...current.payload, completions }, { id });
+  toast('已恢复为未完成');
+  render();
+  maybeSync();
 }
 
 function applyChrome() {
   root.dataset.theme = state.theme;
   root.dataset.font = state.font;
-  const color = state.theme === 'night' ? '#121212' : state.theme === 'paper' ? '#fbf7f1' : '#ffffff';
+  const color = state.theme === 'night' ? '#121212' : state.theme === 'paper' ? '#fbf7f1' : '#4eb7ac';
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', color);
   document.body.style.background = state.theme === 'night' ? '#121212' : '#f3f5f8';
 }
@@ -257,6 +303,26 @@ function bindCalPull(handle, panel) {
   }
 }
 
+/** 启动时若深链已指定 Tab，boot 不要再把它改回首页。 */
+let pendingDeepLink = false;
+
+/** 深链与旧状态：today→首页，me 与 family→家庭页。 */
+function canonicalTab(tab) {
+  if (tab === 'today') return 'home';
+  if (tab === 'me' || tab === 'family') return 'family';
+  return tab || 'home';
+}
+
+function addButton() {
+  return h('button', {
+    type: 'button',
+    className: 'icon-btn add-btn',
+    'aria-label': '添加',
+    html: icons.plus,
+    onClick: openCreateSheet,
+  });
+}
+
 function visibilityLabel(v) {
   return { self: '仅自己', members: '指定成员', family: '全家' }[v] || '';
 }
@@ -304,7 +370,7 @@ async function boot() {
       return;
     }
     state.screen = 'home';
-    state.tab = 'home';
+    if (!pendingDeepLink) state.tab = 'home';
     await loadMembers();
     try {
       await maybeSync();
@@ -338,10 +404,8 @@ function bindDeepLinks() {
   const apply = (url) => {
     const info = widget.handleDeepLink(url);
     if (!info) return;
-    if (info.tab) {
-      // map legacy today -> home
-      state.tab = info.tab === 'today' ? 'home' : info.tab === 'family' ? 'me' : info.tab;
-    }
+    pendingDeepLink = true;
+    if (info.tab) state.tab = canonicalTab(info.tab);
     if (info.path === 'create' || info.day) {
       openCreateForm(info.type === 'event' ? 'event' : 'todo');
       return;
@@ -833,7 +897,7 @@ function renderConnect() {
       text: '← 返回',
       onClick: () => {
         state.screen = api.isLoggedIn() ? 'home' : api.hasLocalAccounts() ? 'local-login' : 'local-register';
-        if (state.screen === 'home') state.tab = 'me';
+        if (state.screen === 'home') state.tab = 'family';
         render();
       },
     }),
@@ -1003,13 +1067,13 @@ function renderMerge() {
 }
 
 function tabs() {
-  // 五栏：个人中心改由右上角头像进入；底栏放便签
   const items = [
     ['home', '首页', icons.home],
     ['todo', '待办', icons.todo],
     ['plans', '计划', icons.plans],
     ['cal', '日历', icons.cal],
     ['notes', '便签', icons.notes],
+    ['family', '家庭', icons.family],
   ];
   return h(
     'nav',
@@ -1084,6 +1148,154 @@ function memberAvatarUrl(m) {
   return m?.avatarMediaId ? api.mediaUrl(m.avatarMediaId) : '';
 }
 
+function profileEntryButton(className = 'home-avatar') {
+  const me = api.getMember();
+  const user = api.getUser();
+  const name = me?.displayName || user?.displayName || '我';
+  const url = memberAvatarUrl(me);
+  return h(
+    'button',
+    {
+      type: 'button',
+      className,
+      'aria-label': '家庭',
+      onClick: () => {
+        state.screen = 'home';
+        state.tab = 'family';
+        state.planId = null;
+        render();
+      },
+    },
+    url
+      ? [h('img', { src: url, alt: '' })]
+      : [document.createTextNode(String(name).slice(0, 1))]
+  );
+}
+
+function loadOrientedBitmap(file) {
+  return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => createImageBitmap(file));
+}
+
+function openAvatarCrop(file) {
+  const view = 280;
+  return loadOrientedBitmap(file).then((bmp) => new Promise((resolve) => {
+    const norm = document.createElement('canvas');
+    norm.width = bmp.width;
+    norm.height = bmp.height;
+    norm.getContext('2d').drawImage(bmp, 0, 0);
+    bmp.close?.();
+
+    const frame = h('div', { className: 'crop-frame' });
+    const img = h('img', { alt: '', draggable: 'false' });
+    img.src = norm.toDataURL('image/jpeg', 0.92);
+    frame.append(img);
+    const zoom = h('input', {
+      type: 'range',
+      min: '0',
+      max: '100',
+      value: '0',
+      'aria-label': '缩放',
+    });
+    const overlay = h('div', { className: 'crop-mask', role: 'dialog', 'aria-modal': 'true', 'aria-label': '调整头像' }, [
+      h('p', { className: 'crop-tip', text: '拖动照片，让人脸落在圆里' }),
+      frame,
+      h('label', { className: 'crop-zoom' }, [
+        h('span', { text: '缩放' }),
+        zoom,
+      ]),
+      h('div', { className: 'crop-actions' }, [
+        h('button', {
+          type: 'button',
+          className: 'btn ghost',
+          text: '取消',
+          onClick: () => finish(null),
+        }),
+        h('button', {
+          type: 'button',
+          className: 'btn',
+          text: '使用这张',
+          onClick: () => finish(exportCircle()),
+        }),
+      ]),
+    ]);
+    document.body.append(overlay);
+
+    const minScale = Math.max(view / norm.width, view / norm.height);
+    const maxScale = minScale * 4;
+    let scale = minScale;
+    let ox = 0;
+    let oy = 0;
+    let drag = null;
+
+    function clamp() {
+      const maxX = Math.max(0, (norm.width * scale - view) / 2);
+      const maxY = Math.max(0, (norm.height * scale - view) / 2);
+      ox = Math.min(maxX, Math.max(-maxX, ox));
+      oy = Math.min(maxY, Math.max(-maxY, oy));
+    }
+    function layout() {
+      clamp();
+      const dw = norm.width * scale;
+      const dh = norm.height * scale;
+      img.style.width = `${dw}px`;
+      img.style.height = `${dh}px`;
+      img.style.transform = `translate(${(view - dw) / 2 + ox}px, ${(view - dh) / 2 + oy}px)`;
+    }
+    function exportCircle() {
+      const out = 512;
+      const canvas = document.createElement('canvas');
+      canvas.width = out;
+      canvas.height = out;
+      const ctx = canvas.getContext('2d');
+      const k = out / view;
+      const dw = norm.width * scale * k;
+      const dh = norm.height * scale * k;
+      ctx.beginPath();
+      ctx.arc(out / 2, out / 2, out / 2, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(norm, (out - dw) / 2 + ox * k, (out - dh) / 2 + oy * k, dw, dh);
+      return new Promise((res) => canvas.toBlob((blob) => res(blob), 'image/jpeg', 0.92));
+    }
+    function finish(result) {
+      overlay.remove();
+      Promise.resolve(result).then(resolve);
+    }
+
+    zoom.addEventListener('input', () => {
+      const t = Number(zoom.value) / 100;
+      const next = minScale + (maxScale - minScale) * t;
+      const pivot = next / scale;
+      ox *= pivot;
+      oy *= pivot;
+      scale = next;
+      layout();
+    });
+    frame.addEventListener('pointerdown', (e) => {
+      frame.setPointerCapture(e.pointerId);
+      drag = { x: e.clientX, y: e.clientY, ox, oy };
+    });
+    frame.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      ox = drag.ox + (e.clientX - drag.x);
+      oy = drag.oy + (e.clientY - drag.y);
+      layout();
+    });
+    frame.addEventListener('pointerup', () => { drag = null; });
+    frame.addEventListener('pointercancel', () => { drag = null; });
+    frame.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const next = Math.min(maxScale, Math.max(minScale, scale * (e.deltaY > 0 ? 0.94 : 1.06)));
+      zoom.value = String(Math.round(((next - minScale) / (maxScale - minScale)) * 100));
+      const pivot = next / scale;
+      ox *= pivot;
+      oy *= pivot;
+      scale = next;
+      layout();
+    }, { passive: false });
+    layout();
+  }));
+}
+
 function avatarButton(person, { size = 64, editable = false, ariaLabel = '头像' } = {}) {
   const name = person?.displayName || person?.name || '?';
   const url = memberAvatarUrl(person);
@@ -1109,13 +1321,16 @@ function avatarButton(person, { size = 64, editable = false, ariaLabel = '头像
       if (!fl) return;
       if (!fl.type.startsWith('image/')) return toast('请选择图片');
       try {
-        await api.uploadMedia(fl, { purpose: 'avatar', memberId: person.id });
+        const blob = await openAvatarCrop(fl);
+        if (!blob) return;
+        const cropped = new File([blob], 'avatar.jpg', { type: 'image/jpeg' });
+        await api.uploadMedia(cropped, { purpose: 'avatar', memberId: person.id });
         await api.fetchMe();
         await loadMembers();
         toast('头像已更新');
         render();
       } catch (e) {
-        toast(e.message);
+        toast(e.message || '头像处理失败');
       }
     });
     return h('div', { style: 'display:inline-grid;justify-items:center' }, [btn, file]);
@@ -1154,13 +1369,27 @@ function todoCard(t, done, me) {
       className: `check ${done ? 'on' : ''}`,
       'aria-label': done ? '标为未完成' : '完成',
       onClick: async () => {
-        const completions = { ...(t.payload.completions || {}) };
-        completions[me?.id || 'guest'] = done ? 'open' : 'done';
-        await api.saveLocalEntity('todo', { ...t.payload, completions }, { id: t.id });
-        if (!done) native.lightTap();
-        toast(done ? '已恢复为未完成' : '已完成');
-        render();
-        maybeSync();
+        const memberId = me?.id || 'guest';
+        try {
+          const completions = { ...(t.payload.completions || {}) };
+          completions[memberId] = done ? 'open' : 'done';
+          await api.saveLocalEntity('todo', { ...t.payload, completions }, { id: t.id });
+          if (!done) {
+            native.lightTap();
+            toast('已完成', {
+              label: '撤销',
+              ms: 5000,
+              onClick: () => undoTodo(t.id, memberId),
+            });
+          } else {
+            toast('已恢复为未完成');
+          }
+          render();
+          maybeSync();
+        } catch (err) {
+          toast(err.message);
+          render();
+        }
       },
     }),
     h('div', { className: 'grow' }, [
@@ -1219,7 +1448,7 @@ async function renderTodayBody() {
         'aria-label': '打开个人页',
         text: name.slice(0, 1),
         onClick: () => {
-          state.tab = 'me';
+          state.tab = 'family';
           render();
         },
       }),
@@ -1941,7 +2170,7 @@ async function renderPlanDetail() {
   const prog = milestoneProgress(milestones);
   const cycleLabel = { daily: '每天', weekly: '每周', monthly: '每月', interval: '间隔' }[plan.payload.cycle] || '计划';
   const wrap = h('div', { className: 'screen' }, [
-    h('div', { className: 'top appbar' }, [
+    h('div', { className: 'top appbar plan-bar' }, [
       h('button', {
         className: 'icon-btn',
         'aria-label': '返回计划',
@@ -1954,7 +2183,14 @@ async function renderPlanDetail() {
         },
       }),
       h('h1', { text: plan.payload.title }),
-      h('span', { className: 'appbar-side' }),
+      me?.role === 'child'
+        ? h('span', { className: 'appbar-side' })
+        : h('button', {
+            type: 'button',
+            className: 'btn ghost',
+            text: '编辑',
+            onClick: () => openPlanEditor(plan),
+          }),
     ]),
     h('div', { className: 'scroller' }, [
       h('div', { className: 'card' }, [
@@ -2034,6 +2270,25 @@ async function renderPlanDetail() {
           )
         : emptyState('还没有里程碑', '编辑计划时可添加节点，用于分阶段提醒与记录进度。', null),
       h('div', { style: 'height:16px' }),
+      me?.role === 'child'
+        ? null
+        : h('button', {
+            className: 'btn ghost block',
+            style: 'margin-top:8px',
+            text: plan.payload.archived ? '恢复计划' : '归档',
+            onClick: () => {
+              if (plan.payload.archived) {
+                setPlanArchived(plan, false);
+                return;
+              }
+              askConfirm({
+                title: '归档计划',
+                body: '归档后首页不再展示，打卡记录仍保留。',
+                confirmLabel: '归档',
+                onConfirm: () => setPlanArchived(plan, true),
+              });
+            },
+          }),
       h('button', {
         className: 'btn secondary block',
         text: '今日打卡（周期）',
@@ -2281,6 +2536,59 @@ function milestoneTone(ms) {
   return '';
 }
 
+function planToDraft(plan) {
+  const p = plan.payload || {};
+  return {
+    entityId: plan.id,
+    title: p.title || '',
+    desc: p.notes || '',
+    cycleType: p.cycle || 'daily',
+    weekdays: [...(p.weekdays || [])],
+    monthDay: p.monthDay || 1,
+    interval: p.interval || 2,
+    start: p.startDate || dayKey(new Date()),
+    end: p.endDate || '',
+    remind: !!p.reminder,
+    remindTime: p.reminder || '20:00',
+    assigneeIds: p.executorIds?.length ? [...p.executorIds] : [myId()],
+    attachments: [],
+    existingAttachmentIds: [...(p.attachmentIds || [])],
+    milestones: (p.milestones || []).map((m) => ({ ...m })),
+    archived: !!p.archived,
+  };
+}
+
+async function openPlanEditor(plan) {
+  if (api.getMember()?.role === 'child') {
+    toast('儿童账号不能编辑计划');
+    return;
+  }
+  await loadMembers();
+  state.planId = plan.id;
+  state.tab = 'plans';
+  state.screen = 'home';
+  state.form = {
+    mode: 'edit',
+    type: 'plan',
+    draft: planToDraft(plan),
+    errors: {},
+    returnTo: 'plan-detail',
+  };
+  render();
+}
+
+async function setPlanArchived(plan, archived) {
+  await api.saveLocalEntity('plan', { ...plan.payload, archived }, { id: plan.id });
+  toast(archived ? '已归档' : '已恢复');
+  render();
+  maybeSync();
+}
+
+function askConfirm({ title, body, confirmLabel, onConfirm }) {
+  state.overlay = { kind: 'confirm', title, body, confirmLabel, onConfirm };
+  render();
+}
+
 function openPlanDetail(planId) {
   state.planId = planId;
   state.screen = 'plan-detail';
@@ -2416,8 +2724,19 @@ function closeForm() {
 
 function draftPatch(patch) {
   if (!state.form || state.form.mode !== 'edit') return;
+  const scroller = root.querySelector('.form-screen .scroller');
+  const top = scroller ? scroller.scrollTop : 0;
   Object.assign(state.form.draft, patch);
-  render();
+  skipAutoFocus = true;
+  Promise.resolve(render()).then(() => {
+    const next = root.querySelector('.form-screen .scroller');
+    if (next) {
+      next.style.scrollBehavior = 'auto';
+      next.scrollTop = top;
+    }
+  }).finally(() => {
+    skipAutoFocus = false;
+  });
 }
 
 function toggleId(list, id) {
@@ -2631,6 +2950,13 @@ function formShell(title, bodyNodes, onSave, saveLabel) {
         'aria-label': '返回',
         html: icons.back,
         onClick: () => {
+          if (state.form?.returnTo === 'plan-detail') {
+            state.form = null;
+            state.screen = 'plan-detail';
+            state.tab = 'plans';
+            render();
+            return;
+          }
           state.form = { mode: 'menu' };
           render();
         },
@@ -3141,8 +3467,12 @@ function renderPlanForm(f) {
     err.milestones ? h('p', { className: 'err', text: err.milestones }) : null,
   ]);
 
+  const keptAttachments = d.existingAttachmentIds?.length
+    ? h('p', { className: 'muted', text: `已有 ${d.existingAttachmentIds.length} 个附件，新选择的会追加。` })
+    : null;
+
   return formShell(
-    '新建计划',
+    d.entityId ? '编辑计划' : '新建计划',
     [
       fieldEl('标题', title, err.title),
       fieldEl('说明', desc),
@@ -3154,6 +3484,7 @@ function renderPlanForm(f) {
       remindTime,
       msEditor,
       peoplePicker('执行人', d.assigneeIds || [], (ids) => draftPatch({ assigneeIds: ids }), err.assignees),
+      keptAttachments,
       attachBlock(d, 'plan'),
     ],
     async () => {
@@ -3214,24 +3545,34 @@ function renderPlanForm(f) {
         return;
       }
       try {
-        const attachmentIds = await uploadDraftAttachments(d, 'plan');
-        await api.saveLocalEntity('plan', {
-          title: d.title.trim(),
-          notes: d.desc || '',
-          cycle: d.cycleType,
-          weekdays: d.cycleType === 'weekly' ? d.weekdays : [],
-          monthDay: d.cycleType === 'monthly' ? Number(d.monthDay) : null,
-          interval: d.cycleType === 'interval' ? Number(d.interval) : null,
-          startDate: d.start,
-          endDate: d.end || null,
-          reminder: d.remind ? d.remindTime || '20:00' : null,
-          executorIds: assignees,
-          milestones,
-          archived: false,
-          attachmentIds,
-        });
+        const uploaded = await uploadDraftAttachments(d, 'plan');
+        const attachmentIds = [...(d.existingAttachmentIds || []), ...uploaded];
+        const savedId = d.entityId;
+        await api.saveLocalEntity(
+          'plan',
+          {
+            title: d.title.trim(),
+            notes: d.desc || '',
+            cycle: d.cycleType,
+            weekdays: d.cycleType === 'weekly' ? d.weekdays : [],
+            monthDay: d.cycleType === 'monthly' ? Number(d.monthDay) : null,
+            interval: d.cycleType === 'interval' ? Number(d.interval) : null,
+            startDate: d.start,
+            endDate: d.end || null,
+            reminder: d.remind ? d.remindTime || '20:00' : null,
+            executorIds: assignees,
+            milestones,
+            archived: !!d.archived,
+            attachmentIds,
+          },
+          savedId ? { id: savedId } : {}
+        );
         state.form = null;
         state.tab = 'plans';
+        if (savedId) {
+          state.planId = savedId;
+          state.screen = 'plan-detail';
+        }
         toast(milestones.length ? `计划已保存 · ${milestones.length} 个里程碑` : '计划已保存');
         render();
         maybeSync();
@@ -3319,7 +3660,6 @@ async function renderHomeBody() {
     render();
   });
 
-  const url = memberAvatarUrl(me);
   const wrap = h('div', { className: 'pad home-rich' }, [
     h('header', { className: 'home-hero' }, [
       h('div', { className: 'home-hero-bg', 'aria-hidden': 'true' }),
@@ -3329,21 +3669,10 @@ async function renderHomeBody() {
           h('h1', { text: `你好，${name}` }),
           h('p', { className: 'home-sub', text: `${fmtDateNice()} · 把小日子安排得刚刚好` }),
         ]),
-        h(
-          'button',
-          {
-            type: 'button',
-            className: 'home-avatar',
-            'aria-label': '个人中心与设置',
-            onClick: () => {
-              state.tab = 'me';
-              render();
-            },
-          },
-          url
-            ? [h('img', { src: url, alt: '' })]
-            : [document.createTextNode((name || '?').slice(0, 1))]
-        ),
+        h('div', { className: 'home-hero-tools' }, [
+          addButton(),
+          profileEntryButton(),
+        ]),
       ]),
       h('div', { className: 'home-search' }, [
         h('span', { html: icons.search, 'aria-hidden': 'true' }),
@@ -3710,8 +4039,14 @@ async function renderNotesBody() {
                   completions: {},
                   attachmentIds: n.payload.attachmentIds || [],
                 });
-                toast('已转为待办');
-                state.tab = 'todo';
+                toast('已转为待办，便签仍保留', {
+                  label: '去查看',
+                  ms: 5000,
+                  onClick: () => {
+                    state.tab = 'todo';
+                    render();
+                  },
+                });
                 render();
                 maybeSync();
               } catch (err) {
@@ -3825,19 +4160,9 @@ async function renderMeBody() {
         className: 'btn secondary',
         style: 'margin:14px 0',
         text: '添加儿童账号',
-        onClick: async () => {
-          const displayName = prompt('儿童显示名');
-          if (!displayName) return;
-          const password = prompt('设置密码（至少 6 位）');
-          if (!password) return;
-          try {
-            const r = await api.createChild({ displayName, password });
-            toast(`已创建，登录名 ${r.childLogin.username}`);
-            await loadMembers();
-            render();
-          } catch (e) {
-            toast(e.message);
-          }
+        onClick: () => {
+          state.overlay = { kind: 'child' };
+          render();
         },
       })
     );
@@ -3908,18 +4233,6 @@ async function renderMeBody() {
       }),
       h('button', {
         className: 'settings-row',
-        text: '登记推送（占位）',
-        onClick: async () => {
-          try {
-            await api.registerPushToken(`web-${Date.now()}`, 'web');
-            toast('已登记推送 token（S2 接 APNs/FCM）');
-          } catch (e) {
-            toast(e.message);
-          }
-        },
-      }),
-      h('button', {
-        className: 'settings-row',
         text: '注销账号',
         onClick: async () => {
           if (!confirm('确定注销账号？此操作不可恢复。')) return;
@@ -3960,24 +4273,22 @@ async function renderHome() {
     cal: '日历',
     plans: '计划',
     notes: '便签',
-    me: '个人中心',
+    family: '家庭',
     insights: '洞察',
   };
-  // legacy tab remap
-  if (state.tab === 'today') state.tab = 'home';
-  if (state.tab === 'family') state.tab = 'me';
+  state.tab = canonicalTab(state.tab);
   const bodyMap = {
     home: renderHomeBody,
     todo: renderTodoBody,
     cal: renderCalBody,
     plans: renderPlansBody,
     notes: renderNotesBody,
-    me: renderMeBody,
+    family: renderMeBody,
     insights: renderInsightsBody,
   };
   const body = await (bodyMap[state.tab] || renderHomeBody)();
   const back =
-    state.tab === 'me' || state.tab === 'insights'
+    state.tab === 'insights'
       ? h('button', {
           className: 'icon-btn',
           'aria-label': '返回首页',
@@ -3988,41 +4299,128 @@ async function renderHome() {
           },
         })
       : h('span', { className: 'appbar-side' });
-  const topRight =
-    state.tab === 'home' || state.tab === 'me'
-      ? h('span', { className: 'appbar-side' })
-      : h('button', {
-          type: 'button',
-          className: 'icon-btn',
-          'aria-label': '个人中心',
-          html: icons.me,
-          onClick: () => {
-            state.tab = 'me';
-            render();
-          },
-        });
   const top =
     state.tab === 'home'
       ? null
       : h('div', { className: 'top appbar' }, [
           back,
           h('h1', { text: titles[state.tab] || 'LuckyTodo' }),
-          topRight,
+          addButton(),
         ]);
 
   return h('div', { className: 'screen' }, [
     top,
     offlineBanner(),
     h('div', { className: state.tab === 'home' ? 'scroller dash-scroll' : 'scroller' }, [body]),
-    h('button', {
-      className: 'fab',
-      'aria-label': '添加',
-      html: icons.plus,
-      onClick: openCreateSheet,
-    }),
     tabs(),
     renderCreateModal(),
   ]);
+}
+
+function closeOverlay() {
+  state.overlay = null;
+  render();
+}
+
+function renderConfirmOverlay() {
+  const o = state.overlay;
+  return h(
+    'div',
+    {
+      className: 'modal',
+      role: 'presentation',
+      onClick: (e) => {
+        if (e.target === e.currentTarget) closeOverlay();
+      },
+    },
+    [
+      h('div', { className: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': o.title }, [
+        h('div', { className: 'handle', 'aria-hidden': 'true' }),
+        h('h2', { text: o.title }),
+        h('p', { text: o.body }),
+        h('div', { className: 'sheet-actions' }, [
+          h('button', { type: 'button', className: 'btn secondary', text: '取消', onClick: closeOverlay }),
+          h('button', {
+            type: 'button',
+            className: 'btn danger',
+            text: o.confirmLabel || '确定',
+            onClick: async () => {
+              const fn = o.onConfirm;
+              state.overlay = null;
+              try {
+                await fn();
+              } catch (err) {
+                toast(err.message);
+                render();
+              }
+            },
+          }),
+        ]),
+      ]),
+    ]
+  );
+}
+
+function renderChildOverlay() {
+  const name = h('input', { maxlength: '20', autocomplete: 'off', placeholder: '怎么称呼这位小朋友' });
+  const pass = h('input', {
+    type: 'password',
+    autocomplete: 'new-password',
+    placeholder: '至少 6 位',
+  });
+  return h(
+    'div',
+    {
+      className: 'modal',
+      role: 'presentation',
+      onClick: (e) => {
+        if (e.target === e.currentTarget) closeOverlay();
+      },
+    },
+    [
+      h('div', { className: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': '添加儿童账号' }, [
+        h('div', { className: 'handle', 'aria-hidden': 'true' }),
+        h('h2', { text: '添加儿童账号' }),
+        h('p', { className: 'muted', text: '儿童用登录名和密码进入，不能自己注册手机号。' }),
+        fieldEl('显示名', name),
+        fieldEl('密码', pass),
+        h('div', { className: 'sheet-actions' }, [
+          h('button', { type: 'button', className: 'btn secondary', text: '取消', onClick: closeOverlay }),
+          h('button', {
+            type: 'button',
+            className: 'btn',
+            text: '创建',
+            onClick: async (e) => {
+              const btn = e.currentTarget;
+              const displayName = name.value.trim();
+              const password = pass.value;
+              if (displayName.length < 1 || displayName.length > 20) return toast('显示名需 1–20 字');
+              if (password.length < 6) return toast('密码至少 6 位');
+              btn.disabled = true;
+              btn.textContent = '创建中…';
+              try {
+                const r = await api.createChild({ displayName, password });
+                state.overlay = null;
+                await loadMembers();
+                await render();
+                toast(`已创建，登录名 ${r.childLogin?.username || ''}`);
+              } catch (err) {
+                btn.disabled = false;
+                btn.textContent = '创建';
+                toast(err.message);
+              }
+            },
+          }),
+        ]),
+      ]),
+    ]
+  );
+}
+
+function renderOverlay() {
+  if (state.overlay?.kind === 'child') return renderChildOverlay();
+  if (state.overlay?.kind === 'confirm') return renderConfirmOverlay();
+  return null;
 }
 
 async function render() {
@@ -4049,6 +4447,8 @@ async function render() {
     else if (state.screen === 'plan-detail') view = await renderPlanDetail();
     else view = await renderHome();
     root.append(view);
+    const overlay = renderOverlay();
+    if (overlay) root.append(overlay);
   } catch (e) {
     console.error('[LuckyTodo] render failed', e);
     root.append(
@@ -4065,12 +4465,15 @@ async function render() {
       ])
     );
   }
-  const focusEl = root.querySelector('.form-screen input, .form-screen textarea, .sheet .menu-item, .cloud-card input');
-  if (focusEl && focusEl.tagName !== 'BUTTON') setTimeout(() => focusEl.focus(), 50);
+  if (!skipAutoFocus) {
+    const focusEl = root.querySelector('.form-screen input, .form-screen textarea, .sheet .menu-item, .cloud-card input');
+    if (focusEl && focusEl.tagName !== 'BUTTON') setTimeout(() => focusEl.focus(), 50);
+  }
   const calPage = root.querySelector('.cal-page');
   if (calPage && typeof calPage._bindCalPull === 'function') {
     requestAnimationFrame(() => calPage._bindCalPull());
   }
+  paintToast();
 }
 
 boot();
