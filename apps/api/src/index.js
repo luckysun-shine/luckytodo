@@ -100,7 +100,16 @@ function publicFamily(f) {
 
 function getAuth(req, { requireFamily = false } = {}) {
   const h = req.headers.authorization || '';
-  const token = h.startsWith('Bearer ') ? h.slice(7) : null;
+  let token = h.startsWith('Bearer ') ? h.slice(7) : null;
+  // 允许 <img src> 通过 query 携带 token（仅用于受保护媒体）
+  if (!token) {
+    try {
+      const u = new URL(req.url || '/', 'http://local');
+      token = u.searchParams.get('token') || null;
+    } catch {
+      token = null;
+    }
+  }
   if (!token) return null;
   const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
   if (!session) return null;

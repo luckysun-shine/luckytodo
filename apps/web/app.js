@@ -1,10 +1,10 @@
-import { css } from './src/styles.js';
-import * as api from './src/api.js';
-import * as db from './src/db.js';
-import * as reminders from './src/reminders.js';
-import * as native from './src/native.js';
-import * as widget from './src/widgetBridge.js';
-import { collectCheckinPayload } from './src/checkin.js';
+import { css } from './src/styles.js?v=20261009d';
+import * as api from './src/api.js?v=20261009d';
+import * as db from './src/db.js?v=20261009d';
+import * as reminders from './src/reminders.js?v=20261009d';
+import * as native from './src/native.js?v=20261009d';
+import * as widget from './src/widgetBridge.js?v=20261009d';
+import { collectCheckinPayload } from './src/checkin.js?v=20261009d';
 
 const style = document.createElement('style');
 style.textContent = css;
@@ -12,7 +12,7 @@ document.head.appendChild(style);
 
 const root = document.getElementById('app');
 /** Bump when replacing brand assets so browsers skip stale cache. */
-const LOGO_VER = '20261003';
+const LOGO_VER = '20261009';
 
 function dayKey(d) {
   const y = d.getFullYear();
@@ -1003,20 +1003,20 @@ function renderMerge() {
 }
 
 function tabs() {
-  // 五栏单行：家庭能力已并入「我的」；便签从首页入口 / FAB 进入，避免底栏折行
+  // 五栏：个人中心改由右上角头像进入；底栏放便签
   const items = [
     ['home', '首页', icons.home],
     ['todo', '待办', icons.todo],
     ['plans', '计划', icons.plans],
     ['cal', '日历', icons.cal],
-    ['me', '我的', icons.me],
+    ['notes', '便签', icons.notes],
   ];
   return h(
     'nav',
     { className: 'tabs', role: 'tablist', 'aria-label': '主导航' },
     items.map((item) => {
       const [id, label, icon] = item;
-      const active = state.tab === id || (id === 'home' && state.tab === 'notes');
+      const active = state.tab === id;
       return h('button', {
         className: active ? 'active' : '',
         role: 'tab',
@@ -1080,6 +1080,49 @@ function emptyState(title, body, cta, onClick) {
 const TILE_TONES = ['green', 'red', 'teal'];
 const PRIO_LABEL = { high: '高', medium: '中', low: '低' };
 
+function memberAvatarUrl(m) {
+  return m?.avatarMediaId ? api.mediaUrl(m.avatarMediaId) : '';
+}
+
+function avatarButton(person, { size = 64, editable = false, ariaLabel = '头像' } = {}) {
+  const name = person?.displayName || person?.name || '?';
+  const url = memberAvatarUrl(person);
+  const file = h('input', { type: 'file', accept: 'image/*', className: 'hidden' });
+  const btn = h(
+    'button',
+    {
+      type: 'button',
+      className: 'avatar',
+      style: `width:${size}px;height:${size}px;font-size:${Math.max(14, size * 0.35)}px`,
+      'aria-label': ariaLabel,
+      onClick: editable ? () => file.click() : undefined,
+    },
+    url
+      ? [h('img', { src: url, alt: '' })]
+      : [document.createTextNode(String(name).slice(0, 1))]
+  );
+  if (editable) {
+    btn.append(h('span', { className: 'cam', text: '✎', 'aria-hidden': 'true' }));
+    file.addEventListener('change', async () => {
+      const fl = file.files?.[0];
+      file.value = '';
+      if (!fl) return;
+      if (!fl.type.startsWith('image/')) return toast('请选择图片');
+      try {
+        await api.uploadMedia(fl, { purpose: 'avatar', memberId: person.id });
+        await api.fetchMe();
+        await loadMembers();
+        toast('头像已更新');
+        render();
+      } catch (e) {
+        toast(e.message);
+      }
+    });
+    return h('div', { style: 'display:inline-grid;justify-items:center' }, [btn, file]);
+  }
+  return btn;
+}
+
 function faceStack(ids) {
   const people = (ids || [])
     .map((id) => (state.members || []).find((m) => m.id === id))
@@ -1088,7 +1131,12 @@ function faceStack(ids) {
   if (!shown.length) return null;
   const extra = people.length - shown.length;
   return h('div', { className: 'faces', 'aria-hidden': 'true' }, [
-    ...shown.map((m) => h('span', { className: 'face', text: (m.displayName || '?').slice(0, 1) })),
+    ...shown.map((m) => {
+      const url = memberAvatarUrl(m);
+      return url
+        ? h('span', { className: 'face' }, [h('img', { src: url, alt: '' })])
+        : h('span', { className: 'face', text: (m.displayName || '?').slice(0, 1) });
+    }),
     extra > 0 ? h('span', { className: 'face', text: `+${extra}` }) : null,
   ]);
 }
@@ -1401,27 +1449,70 @@ async function renderTodayBody() {
 
 async function renderCalBody() {
   const events = await listActive('event');
-  const todos = (await listActive('todo')).filter((t) => t.payload.dueAt);
+  const todos = await listActive('todo');
+  const notes = await listActive('note');
+  const checkins = await listActive('checkin');
   const plans = (await listActive('plan')).filter((p) => !p.payload.archived);
 
   const marked = new Set();
+  const markKinds = {};
   const byDay = {};
   const pushItem = (key, item) => {
     if (!key) return;
     marked.add(key);
+    (markKinds[key] ||= new Set()).add(item.kindKey || item.kind);
     (byDay[key] ||= []).push(item);
   };
   for (const e of events) {
     const key = localDayKeyFromIso(e.payload.startAt);
-    pushItem(key, { title: e.payload.title, when: e.payload.startAt, kind: '日程', sort: e.payload.startAt });
+    pushItem(key, {
+      title: e.payload.title,
+      when: e.payload.startAt,
+      kind: '日程',
+      kindKey: 'event',
+      sort: e.payload.startAt || key,
+    });
   }
   for (const t of todos) {
-    const key = localDayKeyFromIso(t.payload.dueAt);
-    pushItem(key, { title: t.payload.title, when: t.payload.dueAt, kind: '待办', sort: t.payload.dueAt });
+    const key = t.payload.dueAt
+      ? localDayKeyFromIso(t.payload.dueAt)
+      : localDayKeyFromIso(t.updatedAt || t.createdAt);
+    if (!key) continue;
+    const done = Object.values(t.payload.completions || {}).includes('done');
+    pushItem(key, {
+      title: t.payload.title,
+      when: t.payload.dueAt || key,
+      kind: done ? '待办·已完成' : '待办',
+      kindKey: 'todo',
+      sort: t.payload.dueAt || key,
+    });
   }
-  // daily plans mark today; milestones mark their due dates
+  for (const n of notes) {
+    const key = localDayKeyFromIso(n.updatedAt || n.createdAt);
+    if (!key) continue;
+    pushItem(key, {
+      title: n.payload.title,
+      when: n.updatedAt || n.createdAt,
+      kind: '便签',
+      kindKey: 'note',
+      sort: n.updatedAt || key,
+    });
+  }
+  for (const c of checkins) {
+    if (c.payload.status !== 'done') continue;
+    const key = c.payload.date || localDayKeyFromIso(c.updatedAt);
+    if (!key) continue;
+    const plan = plans.find((p) => p.id === c.payload.planId);
+    pushItem(key, {
+      title: plan ? `${plan.payload.title} · 打卡` : '计划打卡',
+      when: key,
+      kind: '打卡',
+      kindKey: 'checkin',
+      sort: `${key}T12:00:00`,
+      planId: c.payload.planId || null,
+    });
+  }
   const todayKey = dayKey(new Date());
-  if (plans.length) marked.add(todayKey);
   for (const p of plans) {
     for (const ms of p.payload.milestones || []) {
       if (!ms.dueDate) continue;
@@ -1429,6 +1520,7 @@ async function renderCalBody() {
         title: `${p.payload.title} · ${ms.title}`,
         when: ms.dueDate,
         kind: ms.status === 'done' ? '里程碑·已完成' : '里程碑',
+        kindKey: 'milestone',
         sort: `${ms.dueDate}T${ms.remindTime || '09:00'}:00`,
         planId: p.id,
       });
@@ -1483,18 +1575,31 @@ async function renderCalBody() {
     const isToday = key === todayKey;
     const isSel = key === selected;
     const hasMark = marked.has(key);
+    const kinds = [...(markKinds[key] || [])].slice(0, 4);
     grid.append(
-      h('button', {
-        type: 'button',
-        className: `cal-cell ${isToday ? 'today' : ''} ${isSel ? 'sel' : ''} ${hasMark ? 'mark' : ''}`,
-        text: String(cell.getDate()),
-        'aria-label': `${key}${hasMark ? '，有事项' : ''}`,
-        'aria-pressed': isSel,
-        onClick: () => {
-          state.calSelected = key;
-          render();
+      h(
+        'button',
+        {
+          type: 'button',
+          className: `cal-cell ${isToday ? 'today' : ''} ${isSel ? 'sel' : ''} ${hasMark ? 'mark' : ''}`,
+          'aria-label': `${key}${hasMark ? '，有事项' : ''}`,
+          'aria-pressed': isSel,
+          onClick: () => {
+            state.calSelected = key;
+            render();
+          },
         },
-      })
+        [
+          h('span', { className: 'cal-day-num', text: String(cell.getDate()) }),
+          hasMark
+            ? h(
+                'span',
+                { className: 'cal-dots', 'aria-hidden': 'true' },
+                kinds.map((k) => h('i', { className: `dot kind-${k}` }))
+              )
+            : null,
+        ]
+      )
     );
   }
 
@@ -1519,26 +1624,46 @@ async function renderCalBody() {
     list,
     h('div', { className: 'section-label', text: `${selDate.getMonth() + 1}月${selDate.getDate()}日 · 事项` })
   );
+  appendNodes(
+    list,
+    h('div', { className: 'cal-legend' }, [
+      ['event', '日程'],
+      ['todo', '待办'],
+      ['note', '便签'],
+      ['checkin', '打卡'],
+      ['milestone', '里程碑'],
+    ].map(([k, label]) => h('span', { className: `cal-leg kind-${k}`, text: label })))
+  );
   if (!dayItems.length) {
     appendNodes(
       list,
-      emptyState('这天还没有安排', '点右下角 + 新建日程，或给待办加上截止日。', '新建日程', () => openCreateForm('event'))
+      emptyState('这天还没有安排', '日程、待办、便签、打卡与里程碑都会显示在这里。', '新建日程', () => openCreateForm('event'))
     );
   } else {
     for (const it of dayItems) {
       appendNodes(
         list,
-        h('div', {
-          className: it.planId ? 'card pressable' : 'card',
-          onClick: it.planId
-            ? () => openPlanDetail(it.planId)
-            : undefined,
-        }, [
-          h('h3', { text: it.title }),
-          h('p', {
-            text: `${it.kind} · ${it.when?.includes?.('T') ? fmt(it.when) : it.when}`,
-          }),
-        ])
+        h(
+          'div',
+          {
+            className: it.planId || it.kindKey === 'note' ? 'card pressable cal-item' : 'card cal-item',
+            onClick: it.planId
+              ? () => openPlanDetail(it.planId)
+              : it.kindKey === 'note'
+                ? () => {
+                    state.tab = 'notes';
+                    render();
+                  }
+                : undefined,
+          },
+          [
+            h('span', { className: `kind-chip kind-${it.kindKey || 'event'}`, text: it.kind }),
+            h('h3', { text: it.title }),
+            h('p', {
+              text: it.when?.includes?.('T') ? fmt(it.when) : String(it.when || ''),
+            }),
+          ]
+        )
       );
     }
   }
@@ -1580,38 +1705,223 @@ async function renderCalBody() {
   return wrap;
 }
 
-async function renderPlansBody() {
-  const plans = await listActive('plan');
-  const wrap = h('div');
-  appendNodes(wrap, h('div', { className: 'section-label', text: '全部计划' }));
-  if (!plans.length) {
-    appendNodes(
-      wrap,
-      emptyState('还没有计划', '适合重复发生的家庭事项，也可拆成里程碑节点逐步推进。', '新建计划', () => openCreateForm('plan'))
+const PLAN_CARD_TONES = ['amber', 'mint', 'coral', 'sky'];
+
+function planTone(i) {
+  return PLAN_CARD_TONES[i % PLAN_CARD_TONES.length];
+}
+
+function checkinsForPlan(checkins, planId) {
+  return (checkins || []).filter(
+    (c) => c.payload.planId === planId && c.payload.status === 'done'
+  );
+}
+
+function planDayMap(checkins) {
+  const map = {};
+  for (const c of checkins) {
+    const d = c.payload.date || localDayKeyFromIso(c.updatedAt);
+    if (!d) continue;
+    map[d] = (map[d] || 0) + 1;
+  }
+  return map;
+}
+
+function sparklineEl(dayMap, tone, days = 28) {
+  const bars = [];
+  const cursor = new Date();
+  cursor.setHours(12, 0, 0, 0);
+  cursor.setDate(cursor.getDate() - (days - 1));
+  let max = 1;
+  const vals = [];
+  for (let i = 0; i < days; i++) {
+    const key = dayKey(cursor);
+    const v = dayMap[key] || 0;
+    vals.push(v);
+    if (v > max) max = v;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  for (const v of vals) {
+    const hPct = v ? Math.max(18, Math.round((v / max) * 100)) : 8;
+    bars.push(
+      h('i', {
+        className: v ? 'on' : '',
+        style: `height:${hPct}%`,
+        title: v ? `${v}` : '',
+      })
     );
   }
-  for (const p of plans) {
-    const prog = milestoneProgress(p.payload.milestones);
-    const cycleLabel = { daily: '每天', weekly: '每周', monthly: '每月', interval: '间隔' }[p.payload.cycle] || p.payload.cycle || '计划';
-    appendNodes(
-      wrap,
-      h('div', {
-        className: 'card pressable',
-        onClick: () => openPlanDetail(p.id),
-      }, [
-        h('h3', { text: p.payload.title }),
-        h('p', {
-          text: p.payload.notes || `${cycleLabel} · ${(p.payload.executorIds || []).length || 1} 人`,
-        }),
-        prog
-          ? h('div', {
-              className: 'progress-pill',
-              text: `里程碑 ${prog.done}/${prog.total} · ${prog.pct}%`,
-            })
-          : null,
+  return h('div', { className: `sparkline tone-${tone}`, 'aria-hidden': 'true' }, bars);
+}
+
+function yearHeatmapEl(checkinsByPlan, plans, year) {
+  const legend = plans.slice(0, 4).map((p, i) => ({
+    id: p.id,
+    title: p.payload.title,
+    tone: planTone(i),
+  }));
+  const rows = [];
+  for (let m = 0; m < 12; m++) {
+    const cells = [];
+    const daysInMonth = new Date(year, m + 1, 0).getDate();
+    for (let d = 1; d <= 31; d++) {
+      if (d > daysInMonth) {
+        cells.push(h('span', { className: 'hm-cell empty' }));
+        continue;
+      }
+      const key = `${year}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const hits = legend.filter((l) => (checkinsByPlan[l.id] || {})[key]);
+      cells.push(
+        h('span', {
+          className: hits.length ? `hm-cell on tone-${hits[0].tone}` : 'hm-cell',
+          title: hits.length ? `${key} · ${hits.map((x) => x.title).join('、')}` : key,
+        })
+      );
+    }
+    rows.push(
+      h('div', { className: 'hm-row' }, [
+        h('span', { className: 'hm-lab', text: String(m + 1) }),
+        h('div', { className: 'hm-days' }, cells),
       ])
     );
   }
+  return h('div', { className: 'year-heat card' }, [
+    h('div', { className: 'section-head' }, [
+      h('h2', { text: `${year}年 打卡热力图` }),
+    ]),
+    h('div', { className: 'hm-grid' }, rows),
+    h(
+      'div',
+      { className: 'hm-legend' },
+      legend.length
+        ? legend.map((l) => h('span', { className: `cal-leg tone-${l.tone}`, text: l.title }))
+        : [h('span', { className: 'muted', text: '打卡后这里会点亮颜色' })]
+    ),
+  ]);
+}
+
+async function renderPlansBody() {
+  const allPlans = await listActive('plan');
+  const checkins = await listActive('checkin');
+  const filter = state.planFilter || 'all';
+  const plans = allPlans.filter((p) => {
+    if (filter === 'active') return !p.payload.archived;
+    if (filter === 'done') return !!p.payload.archived;
+    return true;
+  });
+  const checkinsByPlan = {};
+  for (const p of allPlans) {
+    checkinsByPlan[p.id] = planDayMap(checkinsForPlan(checkins, p.id));
+  }
+
+  const wrap = h('div', { className: 'pad plans-page' }, [
+    h('div', { className: 'filter-row' }, [
+      ['all', '全部'],
+      ['active', '进行中'],
+      ['done', '已归档'],
+    ].map(([id, label]) =>
+      h('button', {
+        type: 'button',
+        className: filter === id ? 'on' : '',
+        text: label,
+        onClick: () => {
+          state.planFilter = id;
+          render();
+        },
+      })
+    )),
+  ]);
+
+  if (!plans.length) {
+    appendNodes(
+      wrap,
+      emptyState('还没有计划', '把长期事项做成项目：打卡、里程碑与热力图都会汇总在这里。', '新建计划', () => openCreateForm('plan'))
+    );
+    return wrap;
+  }
+
+  plans.forEach((p, i) => {
+    const tone = planTone(i);
+    const dayMap = checkinsByPlan[p.id] || {};
+    const dayKeys = Object.keys(dayMap).sort();
+    const checkCount = Object.values(dayMap).reduce((a, b) => a + b, 0);
+    const prog = milestoneProgress(p.payload.milestones);
+    const cycleLabel =
+      { daily: '每天', weekly: '每周', monthly: '每月', interval: '间隔' }[p.payload.cycle] ||
+      p.payload.cycle ||
+      '计划';
+    const badge = prog?.total
+      ? `${prog.pct}%`
+      : checkCount
+        ? `${dayKeys.length}天`
+        : '新';
+    const ms = (p.payload.milestones || []).slice(0, 4);
+    appendNodes(
+      wrap,
+      h(
+        'article',
+        {
+          className: `project-card tone-${tone} pressable`,
+          onClick: () => openPlanDetail(p.id),
+        },
+        [
+          h('div', { className: 'project-top' }, [
+            h('div', { className: 'project-icon', html: icons.plans }),
+            h('div', { className: 'grow' }, [
+              h('h3', { text: p.payload.title }),
+              h('p', {
+                text: p.payload.notes || `${cycleLabel} · ${(p.payload.executorIds || []).length || 1} 人执行`,
+              }),
+            ]),
+            h('div', { className: 'project-badge' }, [
+              h('strong', { text: badge }),
+              h('span', { text: prog?.total ? '里程碑' : '打卡' }),
+            ]),
+          ]),
+          sparklineEl(dayMap, tone, 30),
+          h('div', { className: 'project-stats' }, [
+            h('span', { text: `${dayKeys.length} 天` }),
+            h('span', { text: `${checkCount} 次打卡` }),
+            h('span', {
+              text: dayKeys.length
+                ? `${(checkCount / dayKeys.length).toFixed(1)} 次/天`
+                : '暂无节奏',
+            }),
+          ]),
+          h(
+            'div',
+            { className: 'project-pills' },
+            ms.length
+              ? ms.map((m) =>
+                  h('span', {
+                    className: m.status === 'done' ? 'pill done' : 'pill',
+                    text: `${m.title}${m.status === 'done' ? ' ✓' : ''}`,
+                  })
+                )
+              : [
+                  h('span', {
+                    className: 'pill',
+                    text: `累计打卡 ${checkCount}`,
+                  }),
+                  h('span', {
+                    className: 'pill',
+                    text: cycleLabel,
+                  }),
+                ]
+          ),
+        ]
+      )
+    );
+  });
+
+  appendNodes(
+    wrap,
+    yearHeatmapEl(
+      checkinsByPlan,
+      allPlans.filter((p) => !p.payload.archived),
+      new Date().getFullYear()
+    )
+  );
   return wrap;
 }
 
@@ -1767,8 +2077,8 @@ async function renderInsightsBody() {
               text: '服务器每 12 小时自动跑一次。管理员可在「我的」配置模型，或打开 /admin.html。',
             }),
           ]),
-          emptyState('洞察还在等第一次运行', '先打卡几天，或让管理员手动生成一次。', '去今天', () => {
-            state.tab = 'today';
+          emptyState('洞察还在等第一次运行', '先打卡几天，或让管理员手动生成一次。', '去首页', () => {
+            state.tab = 'home';
             render();
           })
         );
@@ -1894,9 +2204,9 @@ async function renderInsightsBody() {
         h('button', {
           className: 'btn secondary',
           style: 'margin-top:12px',
-          text: '回到今天',
+          text: '看待办',
           onClick: () => {
-            state.tab = 'today';
+            state.tab = 'todo';
             render();
           },
         }),
@@ -1915,8 +2225,8 @@ async function renderInsightsBody() {
   if (!recent.length && !openTodos.length) {
     appendNodes(
       wrap,
-      emptyState('洞察还在等数据', '先创建计划并打卡。连接家庭服务器并配置 AI 后，可每 12 小时自动生成建议。', '去今天', () => {
-        state.tab = 'today';
+      emptyState('洞察还在等数据', '先创建计划并打卡。连接家庭服务器并配置 AI 后，可每 12 小时自动生成建议。', '去首页', () => {
+        state.tab = 'home';
         render();
       })
     );
@@ -2082,7 +2392,7 @@ function openCreateSheet() {
   render();
 }
 
-function openCreateForm(type) {
+async function openCreateForm(type) {
   if (!api.isLoggedIn()) {
     state.screen = api.hasLocalAccounts() ? 'local-login' : 'local-register';
     toast('请先登录');
@@ -2094,6 +2404,7 @@ function openCreateForm(type) {
     toast('儿童账号不能新建日程或计划');
     return;
   }
+  await loadMembers();
   state.form = { mode: 'edit', type, draft: defaultDraft(type), errors: {} };
   render();
 }
@@ -2174,8 +2485,6 @@ function attachBlock(draft, entityType) {
 }
 
 function peoplePicker(label, selectedIds, onChange, err) {
-  // Multi-account assignment only after family server is connected.
-  if (!api.isFamilyMode()) return null;
   const me = api.getMember();
   if (me?.role === 'child') {
     return h('div', {}, [
@@ -2183,26 +2492,43 @@ function peoplePicker(label, selectedIds, onChange, err) {
       h('p', { className: 'muted', text: '执行人是你自己。' }),
     ]);
   }
+  const selected = Array.isArray(selectedIds) ? selectedIds : [];
   const list = assignableMembers();
+  if (!list.length) {
+    return h('div', {}, [
+      h('h2', { className: 'block-title', text: label }),
+      h('p', { className: 'muted', text: '执行人默认为你自己。邀请家人后可在此多选。' }),
+    ]);
+  }
   return h('div', {}, [
     h('h2', { className: 'block-title', text: label }),
+    h('p', { className: 'muted', style: 'margin:-4px 0 10px', text: '点击成员切换选中状态' }),
     h(
       'div',
       { className: 'check-list' },
-      list.map((m) =>
-        h('button', {
-          type: 'button',
-          className: 'check-row',
-          'aria-pressed': selectedIds.includes(m.id),
-          onClick: () => onChange(toggleId(selectedIds, m.id)),
-        }, [
-          h('span', { className: 'box', text: selectedIds.includes(m.id) ? '✓' : '' }),
-          h('span', { className: 'grow' }, [
-            h('strong', { text: m.displayName }),
-            h('span', { className: 'muted', text: roleLabel(m.role) }),
-          ]),
-        ])
-      )
+      list.map((m) => {
+        const on = selected.includes(m.id);
+        return h(
+          'button',
+          {
+            type: 'button',
+            className: 'check-row',
+            'aria-pressed': on ? 'true' : 'false',
+            onClick: (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onChange(toggleId(selected, m.id));
+            },
+          },
+          [
+            h('span', { className: 'box', text: on ? '✓' : '' }),
+            h('span', { className: 'grow' }, [
+              h('strong', { text: m.displayName || '成员' }),
+              h('span', { className: 'muted', text: roleLabel(m.role) }),
+            ]),
+          ]
+        );
+      })
     ),
     err ? h('p', { className: 'err', text: err }) : null,
   ]);
@@ -2418,7 +2744,7 @@ function renderNoteForm(f) {
           attachmentIds,
         });
         state.form = null;
-        state.tab = 'today';
+        state.tab = 'home';
         toast('便签已保存');
         render();
         maybeSync();
@@ -2491,7 +2817,7 @@ function renderTodoForm(f) {
       fieldEl('备注', notes),
       fieldEl('提醒', remind),
       custom,
-      peoplePicker('添加成员', d.assigneeIds || [], (ids) => draftPatch({ assigneeIds: ids }), err.assignees),
+      peoplePicker('执行人', d.assigneeIds || [], (ids) => draftPatch({ assigneeIds: ids }), err.assignees),
       attachBlock(d, 'todo'),
     ],
     async () => {
@@ -2528,7 +2854,7 @@ function renderTodoForm(f) {
           attachmentIds,
         });
         state.form = null;
-        state.tab = 'today';
+        state.tab = 'todo';
         toast('待办已保存');
         render();
         maybeSync();
@@ -2932,29 +3258,40 @@ function renderCreateModal() {
   return null;
 }
 
+async function loadHomeInsight() {
+  if (!api.isFamilyMode() || !state.online) return null;
+  try {
+    const data = await api.api('GET', '/api/insights/latest');
+    return data.report || null;
+  } catch {
+    return null;
+  }
+}
+
 async function renderHomeBody() {
   const me = api.getMember();
   const user = api.getUser();
   const name = me?.displayName || user?.displayName || '你好';
   const plans = (await listActive('plan')).filter((p) => !p.payload.archived);
   const todos = await listActive('todo');
+  const notes = await listActive('note');
+  const events = await listActive('event');
+  const checkins = await listActive('checkin');
   const q = (state.query || '').trim().toLowerCase();
   const match = (t) => !q || String(t || '').toLowerCase().includes(q);
   const openTodos = todos.filter(
     (t) => (t.payload.completions || {})[me?.id || 'guest'] !== 'done' && match(t.payload.title)
   );
-  const doneRecent = todos.filter(
-    (t) => (t.payload.completions || {})[me?.id || 'guest'] === 'done' && match(t.payload.title)
-  );
+  const todayKey = dayKey(new Date());
+  const todayEvents = events.filter((e) => localDayKeyFromIso(e.payload.startAt) === todayKey);
 
-  // streak: consecutive daily checkins ending today
-  const checkins = await listActive('checkin');
   let streak = 0;
   {
     const days = new Set(
       checkins
         .filter((c) => c.payload.status === 'done')
-        .map((c) => localDayKeyFromIso(c.updatedAt || c.payload.at))
+        .map((c) => c.payload.date || localDayKeyFromIso(c.updatedAt || c.payload.at))
+        .filter(Boolean)
     );
     const cursor = new Date();
     for (;;) {
@@ -2965,8 +3302,15 @@ async function renderHomeBody() {
     }
   }
 
+  const insight = await loadHomeInsight();
+  let insightRate = null;
+  if (insight?.stats?.memberStats?.length) {
+    const rates = insight.stats.memberStats.filter((m) => m.rate != null).map((m) => m.rate);
+    if (rates.length) insightRate = Math.round(rates.reduce((a, b) => a + b, 0) / rates.length);
+  }
+
   const search = h('input', {
-    placeholder: '搜索我的计划、提醒或任务…',
+    placeholder: '搜索计划、待办或便签…',
     value: state.query || '',
     'aria-label': '搜索',
   });
@@ -2975,35 +3319,150 @@ async function renderHomeBody() {
     render();
   });
 
-  const wrap = h('div', { className: 'pad' }, [
-    h('div', { className: 'home-hello', style: 'display:flex;justify-content:space-between;align-items:flex-start;gap:12px' }, [
-      h('div', {}, [
-        h('h1', { text: `欢迎，${name}` }),
-        h('p', { text: `今天也是元气满满的一天 · ${fmtDateNice()}` }),
-        streak > 0 ? h('span', { className: 'streak-pill', text: `连续打卡 ${streak} 天` }) : null,
+  const url = memberAvatarUrl(me);
+  const wrap = h('div', { className: 'pad home-rich' }, [
+    h('header', { className: 'home-hero' }, [
+      h('div', { className: 'home-hero-bg', 'aria-hidden': 'true' }),
+      h('div', { className: 'home-hero-row' }, [
+        h('div', {}, [
+          h('p', { className: 'eyebrow', text: 'LuckyTodo' }),
+          h('h1', { text: `你好，${name}` }),
+          h('p', { className: 'home-sub', text: `${fmtDateNice()} · 把小日子安排得刚刚好` }),
+        ]),
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'home-avatar',
+            'aria-label': '个人中心与设置',
+            onClick: () => {
+              state.tab = 'me';
+              render();
+            },
+          },
+          url
+            ? [h('img', { src: url, alt: '' })]
+            : [document.createTextNode((name || '?').slice(0, 1))]
+        ),
       ]),
-      h('button', {
-        type: 'button',
-        className: 'face',
-        style: 'width:40px;height:40px;font-size:1rem;margin:0;border:0;cursor:pointer',
-        text: (name || '?').slice(0, 1),
-        'aria-label': '个人中心',
-        onClick: () => {
-          state.tab = 'me';
-          render();
-        },
-      }),
+      h('div', { className: 'home-search' }, [
+        h('span', { html: icons.search, 'aria-hidden': 'true' }),
+        search,
+      ]),
+      h('div', { className: 'home-stats' }, [
+        h('button', {
+          type: 'button',
+          className: 'home-stat',
+          onClick: () => {
+            state.tab = 'todo';
+            render();
+          },
+        }, [
+          h('strong', { text: String(openTodos.length) }),
+          h('span', { text: '待办' }),
+        ]),
+        h('button', {
+          type: 'button',
+          className: 'home-stat',
+          onClick: () => {
+            state.tab = 'plans';
+            render();
+          },
+        }, [
+          h('strong', { text: String(plans.length) }),
+          h('span', { text: '计划' }),
+        ]),
+        h('button', {
+          type: 'button',
+          className: 'home-stat',
+          onClick: () => {
+            state.tab = 'cal';
+            render();
+          },
+        }, [
+          h('strong', { text: String(todayEvents.length) }),
+          h('span', { text: '今日日程' }),
+        ]),
+        h('div', { className: 'home-stat accent' }, [
+          h('strong', { text: streak ? String(streak) : '—' }),
+          h('span', { text: '连续打卡' }),
+        ]),
+      ]),
     ]),
-    h('div', { className: 'home-search' }, [h('span', { html: icons.search, 'aria-hidden': 'true' }), search]),
   ]);
+
+  // AI insight card
+  appendNodes(
+    wrap,
+    h('section', { className: 'ai-card' }, [
+      h('div', { className: 'ai-card-top' }, [
+        h('div', {}, [
+          h('p', { className: 'eyebrow', text: 'AI 家庭洞察' }),
+          h('h2', { text: insight ? '本周节奏建议' : '智能分析待命' }),
+        ]),
+        h('span', { className: 'ai-badge', html: icons.insights }),
+      ]),
+      insight
+        ? h('div', { className: 'ai-body' }, [
+            insightRate != null
+              ? h('div', { className: 'ai-rate' }, [
+                  h('strong', { text: `${insightRate}%` }),
+                  h('span', { text: '近 7 日完成率' }),
+                  h('div', { className: 'bar' }, [h('i', { style: `width:${insightRate}%` })]),
+                ])
+              : null,
+            h('p', {
+              text:
+                (insight.cards?.[0]
+                  ? `${insight.cards[0].title || ''}：${insight.cards[0].body || ''}`
+                  : ''
+                ).slice(0, 140) ||
+                (insight.status === 'ok'
+                  ? '已根据家庭打卡与待办生成建议，可在洞察页查看详情。'
+                  : '当前为规则兜底结果；配置 AI 后可获得更丰富建议。'),
+            }),
+            h('p', {
+              className: 'muted',
+              text: `${insight.status === 'ok' ? 'AI' : insight.status === 'fallback' ? '规则兜底' : '规则'} · ${fmt(insight.generatedAt)}`,
+            }),
+          ])
+        : h('div', { className: 'ai-body' }, [
+            h('p', {
+              text: api.isFamilyMode()
+                ? '完成几轮计划打卡后，这里会自动生成家庭执行建议。管理员也可在设置中配置 AI 模型。'
+                : '加入家庭并产生打卡数据后，AI 洞察会出现在这里。',
+            }),
+            h('div', { className: 'ai-actions' }, [
+              h('button', {
+                type: 'button',
+                className: 'btn secondary',
+                text: '去打卡计划',
+                onClick: () => {
+                  state.tab = 'plans';
+                  render();
+                },
+              }),
+              h('button', {
+                type: 'button',
+                className: 'btn ghost',
+                text: '打开洞察',
+                onClick: () => {
+                  state.tab = 'insights';
+                  render();
+                },
+              }),
+            ]),
+          ]),
+    ])
+  );
 
   appendNodes(
     wrap,
     h('div', { className: 'section-head' }, [
-      h('h2', { text: '家庭计划' }),
+      h('h2', { text: '我的项目' }),
       h('button', {
         type: 'button',
-        text: '查看全部',
+        text: '全部',
         onClick: () => {
           state.tab = 'plans';
           render();
@@ -3012,44 +3471,59 @@ async function renderHomeBody() {
     ])
   );
   if (!plans.length) {
-    appendNodes(wrap, h('p', { className: 'muted', text: '还没有计划，去建一个吧。' }));
+    appendNodes(
+      wrap,
+      h('div', { className: 'empty-soft' }, [
+        h('p', { text: '还没有家庭计划' }),
+        h('button', {
+          type: 'button',
+          className: 'btn secondary',
+          text: '创建第一个计划',
+          onClick: () => openCreateForm('plan'),
+        }),
+      ])
+    );
   } else {
-    const rail = h('div', { className: 'plan-rail' });
-    plans.filter((p) => match(p.payload.title)).slice(0, 6).forEach((p, i) => {
+    const list = h('div', { className: 'home-projects' });
+    plans.filter((p) => match(p.payload.title)).slice(0, 4).forEach((p, i) => {
+      const tone = planTone(i);
+      const dayMap = planDayMap(checkinsForPlan(checkins, p.id));
+      const days = Object.keys(dayMap).length;
       const prog = milestoneProgress(p.payload.milestones);
-      const pct = prog?.total ? Math.round((prog.done / prog.total) * 100) : 0;
       appendNodes(
-        rail,
+        list,
         h(
-          'div',
+          'article',
           {
-            className: `plan-tile tone-${TILE_TONES[i % TILE_TONES.length]}`,
+            className: `project-card compact tone-${tone} pressable`,
             onClick: () => openPlanDetail(p.id),
           },
           [
-            h('div', { className: 'plan-tile-top' }, [
-              h('span', { className: 'chip', text: pct ? '进行中' : '新计划' }),
+            h('div', { className: 'project-top' }, [
+              h('div', { className: 'grow' }, [
+                h('h3', { text: p.payload.title }),
+                h('p', { text: p.payload.notes || '点击查看打卡与里程碑' }),
+              ]),
+              h('div', { className: 'project-badge' }, [
+                h('strong', { text: prog?.total ? `${prog.pct}%` : `${days || 0}` }),
+                h('span', { text: prog?.total ? '进度' : '天' }),
+              ]),
             ]),
-            h('strong', { text: p.payload.title }),
-            h('div', { className: 'plan-bar' }, [h('i', { style: `width:${pct}%` })]),
-            h('div', { className: 'plan-foot' }, [
-              faceStack(p.payload.executorIds),
-              h('span', { text: `${pct}%` }),
-            ]),
+            sparklineEl(dayMap, tone, 24),
           ]
         )
       );
     });
-    appendNodes(wrap, rail);
+    appendNodes(wrap, list);
   }
 
   appendNodes(
     wrap,
     h('div', { className: 'section-head' }, [
-      h('h2', { text: '今日待办快览' }),
+      h('h2', { text: '今日待办' }),
       h('button', {
         type: 'button',
-        text: '前往待办',
+        text: '全部待办',
         onClick: () => {
           state.tab = 'todo';
           render();
@@ -3057,24 +3531,20 @@ async function renderHomeBody() {
       }),
     ])
   );
-  const preview = [...openTodos.slice(0, 4), ...doneRecent.slice(0, 2)];
-  if (!preview.length) {
-    appendNodes(wrap, h('p', { className: 'muted', text: '今天还没有待办。' }));
+  if (!openTodos.length) {
+    appendNodes(wrap, h('p', { className: 'muted', text: '今天很清爽，没有未完成待办。' }));
   } else {
-    for (const t of preview) {
-      const done = (t.payload.completions || {})[me?.id || 'guest'] === 'done';
-      appendNodes(wrap, todoCard(t, done, me));
-    }
+    for (const t of openTodos.slice(0, 5)) appendNodes(wrap, todoCard(t, false, me));
   }
 
-  const notes = (await listActive('note')).filter((n) => match(n.payload.title));
+  const noteList = notes.filter((n) => match(n.payload.title)).slice(0, 3);
   appendNodes(
     wrap,
-    h('div', { className: 'section-head', style: 'margin-top:18px' }, [
-      h('h2', { text: '便签' }),
+    h('div', { className: 'section-head', style: 'margin-top:8px' }, [
+      h('h2', { text: '最近便签' }),
       h('button', {
         type: 'button',
-        text: '全部便签',
+        text: '全部',
         onClick: () => {
           state.tab = 'notes';
           render();
@@ -3082,38 +3552,114 @@ async function renderHomeBody() {
       }),
     ])
   );
-  if (!notes.length) {
-    appendNodes(
-      wrap,
-      h('p', { className: 'muted', text: '还没有便签。点右下角 + 可新建。' })
-    );
+  if (!noteList.length) {
+    appendNodes(wrap, h('p', { className: 'muted', text: '还没有便签，可在底栏「便签」页记录灵感。' }));
   } else {
-    for (const n of notes.slice(0, 3)) {
+    const rail = h('div', { className: 'note-rail' });
+    for (const n of noteList) {
       appendNodes(
-        wrap,
-        h('div', {
-          className: 'card pressable',
-          onClick: () => {
-            state.tab = 'notes';
-            render();
+        rail,
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'note-chip',
+            onClick: () => {
+              state.tab = 'notes';
+              render();
+            },
           },
-        }, [
-          h('h3', { text: `${n.payload.pinned ? '📌 ' : ''}${n.payload.title}` }),
-          h('p', { text: n.payload.body || visibilityLabel(n.payload.visibility) || '便签' }),
-        ])
+          [
+            h('strong', { text: n.payload.title }),
+            h('span', { text: (n.payload.body || '').slice(0, 36) || '便签' }),
+          ]
+        )
       );
     }
+    appendNodes(wrap, rail);
   }
+
   return wrap;
 }
 
 async function renderTodoBody() {
-  state.homeFilter = state.homeFilter || 'open';
-  // reuse today list section by temporarily using today renderer pieces
-  const prev = state.tab;
-  const body = await renderTodayBody();
-  state.tab = prev;
-  return body;
+  const todos = await listActive('todo');
+  const me = api.getMember();
+  const q = (state.query || '').trim().toLowerCase();
+  const match = (title) => !q || String(title || '').toLowerCase().includes(q);
+  const visible = todos.filter((t) => match(t.payload.title));
+  const openTodos = visible.filter((t) => (t.payload.completions || {})[me?.id || 'guest'] !== 'done');
+  const doneTodos = visible.filter((t) => (t.payload.completions || {})[me?.id || 'guest'] === 'done');
+  const todayKey = dayKey(new Date());
+  const dueToday = openTodos.filter((t) => {
+    if (!t.payload.dueAt) return true;
+    return localDayKeyFromIso(t.payload.dueAt) === todayKey;
+  });
+  const filter = state.homeFilter === 'done' || state.homeFilter === 'today' ? state.homeFilter : 'open';
+  state.homeFilter = filter;
+  const taskList = filter === 'done' ? doneTodos : filter === 'today' ? dueToday : openTodos;
+
+  const searchInput = h('input', {
+    className: 'task-search-input',
+    type: 'search',
+    placeholder: '搜索待办…',
+    value: state.query || '',
+    'aria-label': '搜索待办',
+  });
+  searchInput.addEventListener('input', () => {
+    const start = searchInput.selectionStart;
+    state.query = searchInput.value;
+    render().then(() => {
+      const next = root.querySelector('.task-search-input');
+      if (!next) return;
+      next.focus();
+      const pos = Math.min(start ?? next.value.length, next.value.length);
+      try {
+        next.setSelectionRange(pos, pos);
+      } catch {
+        /* ignore */
+      }
+    });
+  });
+
+  const wrap = h('div', { className: 'pad' }, [
+    h('label', { className: 'task-search', style: 'margin-bottom:12px' }, [
+      h('span', { html: icons.search, 'aria-hidden': 'true' }),
+      searchInput,
+    ]),
+    h('div', { className: 'task-tabs', role: 'tablist' }, [
+      ['open', `待办 ${openTodos.length}`],
+      ['today', `今天 ${dueToday.length}`],
+      ['done', `已完成 ${doneTodos.length}`],
+    ].map(([id, label]) =>
+      h('button', {
+        type: 'button',
+        className: filter === id ? 'on' : '',
+        role: 'tab',
+        'aria-selected': filter === id,
+        text: label,
+        onClick: () => {
+          state.homeFilter = id;
+          render();
+        },
+      })
+    )),
+  ]);
+
+  if (!taskList.length) {
+    appendNodes(
+      wrap,
+      emptyState(
+        q ? '没有匹配的待办' : filter === 'done' ? '还没有完成的待办' : '还没有待办',
+        q ? '换个关键词试试。' : '点右下角 + 新建待办，可选择执行人与截止时间。',
+        q || filter === 'done' ? null : '添加待办',
+        q || filter === 'done' ? null : () => openCreateForm('todo')
+      )
+    );
+  } else {
+    for (const t of taskList) appendNodes(wrap, todoCard(t, filter === 'done', me));
+  }
+  return wrap;
 }
 
 async function renderNotesBody() {
@@ -3208,11 +3754,14 @@ async function renderMeBody() {
   const display = me?.displayName || user?.displayName || '我';
   const wrap = h('div', { className: 'pad' }, [
     h('div', { className: 'profile-head', style: 'margin-bottom:16px' }, [
-      h('div', {
-        className: 'avatar',
-        style: 'width:64px;height:64px;font-size:1.4rem',
-        text: display.slice(0, 1),
+      avatarButton(me || { displayName: display }, {
+        size: 86,
+        editable: !!(me && api.isFamilyMode()),
+        ariaLabel: '更换头像',
       }),
+      !api.isFamilyMode()
+        ? h('p', { className: 'muted', style: 'margin:6px 0 0', text: '加入家庭后可设置头像' })
+        : h('p', { className: 'muted', style: 'margin:6px 0 0', text: '点击头像更换照片' }),
       h('h2', { text: display }),
       h('p', {
         text: `${roleLabel(me?.role)} · ${family?.name || '未命名家庭'}${user?.phone ? ` · ${user.phone}` : ''}`,
@@ -3247,10 +3796,21 @@ async function renderMeBody() {
 
   const grid = h('div', { className: 'member-grid' });
   for (const m of members) {
+    const url = memberAvatarUrl(m);
     appendNodes(
       grid,
       h('div', { className: 'member-card' }, [
-        h('div', { className: 'face', style: 'margin:0;width:36px;height:36px', text: (m.displayName || '?').slice(0, 1) }),
+        url
+          ? h('div', {
+              className: 'face',
+              style: 'margin:0;width:36px;height:36px;overflow:hidden',
+              html: `<img src="${url}" alt="" style="width:100%;height:100%;object-fit:cover">`,
+            })
+          : h('div', {
+              className: 'face',
+              style: 'margin:0;width:36px;height:36px',
+              text: (m.displayName || '?').slice(0, 1),
+            }),
         h('strong', { text: m.displayName || '成员' }),
         h('span', { className: 'role', text: roleLabel(m.role) }),
       ])
@@ -3417,7 +3977,7 @@ async function renderHome() {
   };
   const body = await (bodyMap[state.tab] || renderHomeBody)();
   const back =
-    state.tab === 'notes'
+    state.tab === 'me' || state.tab === 'insights'
       ? h('button', {
           className: 'icon-btn',
           'aria-label': '返回首页',
@@ -3428,13 +3988,26 @@ async function renderHome() {
           },
         })
       : h('span', { className: 'appbar-side' });
+  const topRight =
+    state.tab === 'home' || state.tab === 'me'
+      ? h('span', { className: 'appbar-side' })
+      : h('button', {
+          type: 'button',
+          className: 'icon-btn',
+          'aria-label': '个人中心',
+          html: icons.me,
+          onClick: () => {
+            state.tab = 'me';
+            render();
+          },
+        });
   const top =
     state.tab === 'home'
       ? null
       : h('div', { className: 'top appbar' }, [
           back,
           h('h1', { text: titles[state.tab] || 'LuckyTodo' }),
-          h('span', { className: 'appbar-side' }),
+          topRight,
         ]);
 
   return h('div', { className: 'screen' }, [

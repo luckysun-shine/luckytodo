@@ -31,6 +31,14 @@ export function getToken() {
   return localStorage.getItem('lt_token') || '';
 }
 
+/** Authenticated media URL for <img src> (token in query). */
+export function mediaUrl(id) {
+  if (!id) return '';
+  const t = getToken();
+  const q = t ? `?token=${encodeURIComponent(t)}` : '';
+  return `${apiBase()}/api/media/${encodeURIComponent(id)}${q}`;
+}
+
 export function getMode() {
   if (getToken() && getFamily()?.id) return 'family';
   if (getToken()) return 'cloud';
