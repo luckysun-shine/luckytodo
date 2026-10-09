@@ -1332,14 +1332,15 @@ button { cursor: pointer; }
 .cloud-brand { text-align: center; padding-top: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .cloud-brand .brand-mark {
   width: 88px; height: 88px; border-radius: 22px;
-  object-fit: cover;
-  background: #fff;
-  box-shadow: var(--shadow);
+  object-fit: contain;
+  background: transparent;
+  box-shadow: none;
 }
 .cloud-brand .brand-wordmark {
   width: min(240px, 72vw); height: auto;
   object-fit: contain;
   margin-top: 8px;
+  background: transparent;
 }
 .cloud-brand h1 { margin: 12px 0 4px; font-size: 1.6rem; font-weight: 800; }
 .cloud-brand p { margin: 0; color: var(--muted); font-size: 0.9rem; }

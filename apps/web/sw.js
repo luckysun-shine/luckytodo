@@ -1,5 +1,5 @@
 /* LuckyTodo service worker — cache shell for offline launch */
-const CACHE = 'luckytodo-shell-v20261009d';
+const CACHE = 'luckytodo-shell-v20261009f';
 const SHELL = [
   './',
   './index.html',

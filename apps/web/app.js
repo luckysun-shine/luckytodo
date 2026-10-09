@@ -1,4 +1,4 @@
-import { css } from './src/styles.js?v=20261009d';
+import { css } from './src/styles.js?v=20261009f';
 import * as api from './src/api.js?v=20261009d';
 import * as db from './src/db.js?v=20261009d';
 import * as reminders from './src/reminders.js?v=20261009d';
@@ -12,7 +12,7 @@ document.head.appendChild(style);
 
 const root = document.getElementById('app');
 /** Bump when replacing brand assets so browsers skip stale cache. */
-const LOGO_VER = '20261009';
+const LOGO_VER = '20261009f';
 
 function dayKey(d) {
   const y = d.getFullYear();
